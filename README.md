@@ -1,0 +1,1 @@
+# Crib-Guard (Pi UI) – LVGL + SDL2

@@ -1,0 +1,6 @@
+[submodule "extern/lvgl"]
+	path = extern/lvgl
+	url = https://github.com/lvgl/lvgl
+[submodule "extern/lv_drivers"]
+	path = extern/lv_drivers
+	url = https://github.com/lvgl/lv_drivers
