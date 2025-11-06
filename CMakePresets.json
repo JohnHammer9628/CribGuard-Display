@@ -1,0 +1,22 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 23 },
+  "configurePresets": [
+    {
+      "name": "win-rel",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-win",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "win-rel",
+      "configurePreset": "win-rel"
+    }
+  ]
+}

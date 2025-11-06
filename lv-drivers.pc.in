@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: lv_drivers
+Description: LVGL drivers
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -llv_drivers
+Cflags: -I${includedir}

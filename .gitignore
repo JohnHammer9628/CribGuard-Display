@@ -1,3 +1,23 @@
-build/
+@'
+# Build dirs
+/build/
+/build-win/
+/CMakeFiles/
+/_deps/
+
+# CMake/Build files
+CMakeCache.txt
+*.ninja
+*.obj
+*.pdb
+*.ilk
+*.log
+*.lib
+*.dll
+*.exe
+*.pch
+
+# IDE
 .vscode/
 .idea/
+'@ | Set-Content .\.gitignore
