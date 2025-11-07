@@ -201,6 +201,8 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(row_hdr, 0, 0);
     lv_obj_set_flex_flow(row_hdr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_ver(row_hdr, 6, 0);
+    lv_obj_set_style_pad_right(row_hdr, 8, 0);
 
     lv_obj_t* lbl_title = lv_label_create(row_hdr);
     lv_label_set_text(lbl_title, "Settings");
@@ -213,12 +215,15 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(hdr_btns, 0, 0);
     lv_obj_set_style_pad_column(hdr_btns, 8, 0);
     lv_obj_set_flex_flow(hdr_btns, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(hdr_btns, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
     lv_obj_t* btn_cancel = lv_btn_create(hdr_btns);
+    lv_obj_set_size(btn_cancel, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     { lv_obj_t* lbl = lv_label_create(btn_cancel); lv_label_set_text(lbl, "Cancel"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_cancel, [](lv_event_t* /*e*/){ close_settings(); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_save = lv_btn_create(hdr_btns);
+     lv_obj_set_size(btn_save, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     { lv_obj_t* lbl = lv_label_create(btn_save); lv_label_set_text(lbl, "Save"); lv_obj_center(lbl); }
 
     auto make_row = [&](const char* left, lv_obj_t** outRow){
