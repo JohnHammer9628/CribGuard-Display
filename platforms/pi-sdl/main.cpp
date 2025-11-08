@@ -100,6 +100,18 @@ static lv_obj_t* g_cam_meta_label = nullptr;
 static lv_obj_t* g_cam_btn_full = nullptr;
 static lv_obj_t* g_cam_sw_mute = nullptr;
 
+// Main dashboard elements
+static lv_obj_t* g_dash_card = nullptr;
+static lv_obj_t* g_dash_hero = nullptr;
+static lv_obj_t* g_dash_ring = nullptr;
+static lv_obj_t* g_stat_conn = nullptr;
+static lv_obj_t* g_stat_vol  = nullptr;
+static lv_obj_t* g_stat_qh   = nullptr;
+
+// Top bar quick-action buttons (replace switches)
+static lv_obj_t* g_btn_quiet = nullptr;
+static lv_obj_t* g_btn_conn = nullptr;
+
 static bool   g_connected   = true;
 static bool   g_quiet_hours = false;
 static int    g_quiet_start = 18; // 24h
@@ -113,25 +125,34 @@ static bool   g_cam_show_spinner = false;
 static lv_timer_t* g_cam_spinner_timer = nullptr;
 
 // ---------- Helpers ----------
+// Forward declaration so it can be used in helpers below
+static void update_dashboard();
+static void apply_top_buttons_state();
+static void on_top_quiet_click(lv_event_t* e);
+static void on_top_conn_click(lv_event_t* e);
+static std::string format_hour12(int hour24) {
+    int h = ((hour24 % 24) + 24) % 24;
+    int display = h % 12;
+    if (display == 0) display = 12;
+    bool pm = h >= 12;
+    return std::to_string(display) + (pm ? " PM" : " AM");
+}
 static void set_status_text(const char* txt, lv_color_t color) {
     lv_label_set_text(g_lbl_status, txt);
     lv_obj_set_style_text_color(g_lbl_status, color, 0);
     log_line((std::string("[UI] status: ") + txt).c_str());
+    update_dashboard();
 }
 
 static void update_top_label() {
-    char hh[8];  std::snprintf(hh, sizeof(hh), "%02d", g_quiet_start);
-    char he[8];  std::snprintf(he, sizeof(he), "%02d", g_quiet_end);
-    std::string s = "CribGuard • ";
-    s += (g_connected ? "Connected" : "Disconnected");
-    s += " • Vol ";
-    s += std::to_string(g_volume);
-    s += " • Quiet: ";
-    s += (g_quiet_hours ? "On" : "Off");
-    s += " (";
-    s += hh; s += "│"; s += he; s += ")";
-    lv_label_set_text(g_lbl_conn, s.c_str());
-    log_line((std::string("[UI] topbar: ") + s).c_str());
+    // Keep brand short in the top-left; reflect state via quick-action pills
+    if (g_lbl_conn) lv_label_set_text(g_lbl_conn, "CribGuard");
+    apply_top_buttons_state();
+    std::string log_s = std::string("brand=CribGuard, conn=") + (g_connected ? "on" : "off")
+        + ", vol=" + std::to_string(g_volume)
+        + ", quiet=" + (g_quiet_hours ? "on" : "off");
+    log_line((std::string("[UI] topbar: ") + log_s).c_str());
+    update_dashboard();
 }
 
 // ---------- Events ----------
@@ -184,6 +205,10 @@ static void on_cam_mute_toggle(lv_event_t* e);
 
 static void cam_spinner_show(uint32_t auto_hide_ms);
 static void cam_spinner_hide();
+static void update_dashboard();
+static void apply_top_buttons_state();
+static void on_top_quiet_click(lv_event_t* e);
+static void on_top_conn_click(lv_event_t* e);
 
 // ---------- Settings dialog ----------
 static void build_settings_dialog(lv_obj_t* parent) {
@@ -208,10 +233,15 @@ static void build_settings_dialog(lv_obj_t* parent) {
 
     lv_obj_set_style_pad_hor(sheet, 16, 0);
     lv_obj_set_style_pad_ver(sheet, 14, 0);
-    lv_obj_set_style_bg_color(sheet, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(sheet, lv_color_hex(0x16191D), 0);
     lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(sheet, lv_color_hex(0xEDEFF2), 0);
     lv_obj_set_style_border_width(sheet, 1, 0);
+    lv_obj_set_style_border_color(sheet, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_radius(sheet, 10, 0);
+    lv_obj_set_style_shadow_width(sheet, 18, 0);
+    lv_obj_set_style_shadow_opa(sheet, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_color(sheet, lv_color_hex(0x000000), 0);
 
     lv_obj_set_flex_flow(sheet, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(sheet, 12, 0);
@@ -221,8 +251,11 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_size(row_hdr, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_clear_flag(row_hdr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row_hdr, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_opa(row_hdr, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row_hdr, 0, 0);
+    lv_obj_set_style_bg_color(row_hdr, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_opa(row_hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(row_hdr, 1, 0);
+    lv_obj_set_style_border_color(row_hdr, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_side(row_hdr, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_pad_all(row_hdr, 0, 0);
     lv_obj_set_flex_flow(row_hdr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -231,6 +264,7 @@ static void build_settings_dialog(lv_obj_t* parent) {
 
     lv_obj_t* lbl_title = lv_label_create(row_hdr);
     lv_label_set_text(lbl_title, "Settings");
+    lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xEDEFF2), 0);
 
     lv_obj_t* hdr_btns = lv_obj_create(row_hdr);
     lv_obj_clear_flag(hdr_btns, LV_OBJ_FLAG_SCROLLABLE);
@@ -244,11 +278,25 @@ static void build_settings_dialog(lv_obj_t* parent) {
 
     lv_obj_t* btn_cancel = lv_btn_create(hdr_btns);
     lv_obj_set_size(btn_cancel, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(btn_cancel, 6, 0);
+    lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_bg_opa(btn_cancel, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(btn_cancel, 1, 0);
+    lv_obj_set_style_border_color(btn_cancel, lv_color_hex(0x3A4048), 0);
+    lv_obj_set_style_pad_hor(btn_cancel, 12, 0);
+    lv_obj_set_style_pad_ver(btn_cancel, 8, 0);
     { lv_obj_t* lbl = lv_label_create(btn_cancel); lv_label_set_text(lbl, "Cancel"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_cancel, [](lv_event_t* /*e*/){ close_settings(); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_save = lv_btn_create(hdr_btns);
      lv_obj_set_size(btn_save, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(btn_save, 6, 0);
+    lv_obj_set_style_bg_color(btn_save, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_bg_opa(btn_save, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(btn_save, 1, 0);
+    lv_obj_set_style_border_color(btn_save, lv_color_hex(0x3A4048), 0);
+    lv_obj_set_style_pad_hor(btn_save, 12, 0);
+    lv_obj_set_style_pad_ver(btn_save, 8, 0);
     { lv_obj_t* lbl = lv_label_create(btn_save); lv_label_set_text(lbl, "Save"); lv_obj_center(lbl); }
 
     auto make_row = [&](const char* left, lv_obj_t** outRow){
@@ -266,6 +314,7 @@ static void build_settings_dialog(lv_obj_t* parent) {
         lv_obj_t* l = lv_label_create(r);
         lv_label_set_text(l, left);
         lv_obj_set_width(l, LV_PCT(42));
+        lv_obj_set_style_text_color(l, lv_color_hex(0xEDEFF2), 0);
         if (outRow) *outRow = r;
         return r;
     };
@@ -284,6 +333,13 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_style_pad_ver(sld_default, 6, 0);
     lv_slider_set_range(sld_default, 0, 100);
     lv_slider_set_value(sld_default, g_volume, LV_ANIM_OFF);
+    // slider styling
+    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sld_default, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0x7FB3FF), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sld_default, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0xEDEFF2), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(sld_default, LV_OPA_COVER, LV_PART_KNOB);
 
     // Quiet Hours Enabled
     lv_obj_t* row_qh=nullptr; make_row("Quiet Hours Enabled", &row_qh);
@@ -293,18 +349,24 @@ static void build_settings_dialog(lv_obj_t* parent) {
     // Quiet Start Hour
     lv_obj_t* row_qstart=nullptr; make_row("Quiet Start Hour", &row_qstart);
     lv_obj_t* dd_start = lv_dropdown_create(row_qstart);
-    lv_obj_set_width(dd_start, 96);
+    lv_obj_set_width(dd_start, 120);
     lv_dropdown_set_options(dd_start,
         "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23");
     lv_dropdown_set_selected(dd_start, g_quiet_start);
+    lv_obj_set_style_bg_color(dd_start, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dd_start, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd_start, lv_color_hex(0xEDEFF2), LV_PART_MAIN);
 
     // Quiet End Hour
     lv_obj_t* row_qend=nullptr; make_row("Quiet End Hour", &row_qend);
     lv_obj_t* dd_end = lv_dropdown_create(row_qend);
-    lv_obj_set_width(dd_end, 96);
+    lv_obj_set_width(dd_end, 120);
     lv_dropdown_set_options(dd_end,
         "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23");
     lv_dropdown_set_selected(dd_end, g_quiet_end);
+    lv_obj_set_style_bg_color(dd_end, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dd_end, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd_end, lv_color_hex(0xEDEFF2), LV_PART_MAIN);
 
     // Save handler
     lv_obj_add_event_cb(btn_save, [](lv_event_t* e){
@@ -627,6 +689,76 @@ static void apply_camera_ui_state() {
     }
 }
 
+// ---------- Dashboard updater ----------
+static void update_dashboard() {
+    if (!g_dash_card) return;
+
+    // Determine status color and apply to hero ring
+    const char* st = g_lbl_status ? lv_label_get_text(g_lbl_status) : "Calm";
+    lv_color_t ring = lv_color_hex(0x22AA22);
+    if (st && std::string(st) == "Cry")       ring = lv_color_hex(0xCC2222);
+    else if (st && std::string(st) == "Motion") ring = lv_color_hex(0xD08770);
+    if (g_dash_ring) {
+        lv_obj_set_style_bg_opa(g_dash_ring, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(g_dash_ring, 10, 0);
+        lv_obj_set_style_border_color(g_dash_ring, ring, 0);
+        lv_obj_set_style_radius(g_dash_ring, LV_RADIUS_CIRCLE, 0);
+    }
+
+    // Connection stat
+    if (g_stat_conn) {
+        lv_label_set_text(g_stat_conn, g_connected ? "Connected" : "Disconnected");
+        lv_obj_set_style_text_color(g_stat_conn, g_connected ? lv_color_hex(0xB0D7FF) : lv_color_hex(0xFF6B6B), 0);
+    }
+    // Volume stat
+    if (g_stat_vol) {
+        std::string s = std::to_string(g_volume) + "%";
+        lv_label_set_text(g_stat_vol, s.c_str());
+    }
+    // Quiet Hours stat
+    if (g_stat_qh) {
+        if (g_quiet_hours) {
+            std::string s = "On  ";
+            s += format_hour12(g_quiet_start);
+            s += " - ";
+            s += format_hour12(g_quiet_end);
+            lv_label_set_text(g_stat_qh, s.c_str());
+            lv_obj_set_style_text_color(g_stat_qh, lv_color_hex(0xB0D7FF), 0);
+        } else {
+            lv_label_set_text(g_stat_qh, "Off");
+            lv_obj_set_style_text_color(g_stat_qh, lv_color_hex(0x9AA3AD), 0);
+        }
+    }
+}
+
+// ---------- Top bar quick-action state ----------
+static void apply_top_buttons_state() {
+    // Quiet button
+    if (g_btn_quiet) {
+        lv_color_t bg = g_quiet_hours ? lv_color_hex(0x2F3B46) : lv_color_hex(0x2A2F36);
+        lv_color_t fg = g_quiet_hours ? lv_color_hex(0xB0D7FF) : lv_color_hex(0xEDEFF2);
+        lv_obj_set_style_bg_color(g_btn_quiet, bg, 0);
+        lv_obj_set_style_bg_opa(g_btn_quiet, LV_OPA_40, 0);
+        lv_obj_t* lbl = lv_obj_get_child(g_btn_quiet, 0);
+        if (lbl) {
+            lv_label_set_text(lbl, g_quiet_hours ? "Quiet On" : "Quiet Off");
+            lv_obj_set_style_text_color(lbl, fg, 0);
+        }
+    }
+    // Connection button
+    if (g_btn_conn) {
+        lv_color_t bg = g_connected ? lv_color_hex(0x294236) : lv_color_hex(0x3F2A2A);
+        lv_color_t fg = g_connected ? lv_color_hex(0xB2F5DC) : lv_color_hex(0xFFB3B3);
+        lv_obj_set_style_bg_color(g_btn_conn, bg, 0);
+        lv_obj_set_style_bg_opa(g_btn_conn, LV_OPA_40, 0);
+        lv_obj_t* lbl = lv_obj_get_child(g_btn_conn, 0);
+        if (lbl) {
+            lv_label_set_text(lbl, g_connected ? "Connected" : "Offline");
+            lv_obj_set_style_text_color(lbl, fg, 0);
+        }
+    }
+}
+
 static void on_cam_fullscreen(lv_event_t* /*e*/) {
     g_cam_fullscreen = !g_cam_fullscreen;
     log_line(g_cam_fullscreen ? "[UI] camera fullscreen on" : "[UI] camera fullscreen off");
@@ -687,6 +819,19 @@ static void cam_spinner_hide() {
     if (g_cam_spinner) lv_obj_add_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
     if (g_cam_spinner_timer) { lv_timer_del(g_cam_spinner_timer); g_cam_spinner_timer = nullptr; }
 }
+
+// ---------- Top bar quick-action handlers ----------
+static void on_top_quiet_click(lv_event_t* /*e*/) {
+    g_quiet_hours = !g_quiet_hours;
+    update_top_label();
+    apply_top_buttons_state();
+}
+
+static void on_top_conn_click(lv_event_t* /*e*/) {
+    g_connected = !g_connected;
+    update_top_label();
+    apply_top_buttons_state();
+}
 // ---------- Build UI ----------
 static void build_ui() {
     // Root screen (no scroll)
@@ -699,7 +844,7 @@ static void build_ui() {
 
     // Top bar (fixed)
     lv_obj_t* top = lv_obj_create(screen);
-    lv_obj_set_size(top, LV_PCT(100), 56);
+    lv_obj_set_size(top, LV_PCT(100), 64);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
@@ -707,8 +852,8 @@ static void build_ui() {
 
     lv_obj_set_style_bg_color(top, lv_color_hex(0x1E232A), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_hor(top, 12, 0);
-    lv_obj_set_style_pad_ver(top, 8, 0);
+    lv_obj_set_style_pad_hor(top, 16, 0);
+    lv_obj_set_style_pad_ver(top, 10, 0);
     lv_obj_set_style_border_width(top, 1, 0);
     lv_obj_set_style_border_color(top, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_border_side(top, LV_BORDER_SIDE_BOTTOM, 0);
@@ -721,10 +866,8 @@ static void build_ui() {
     // Left label (ellipsis)
     g_lbl_conn = lv_label_create(top);
     lv_obj_set_style_text_color(g_lbl_conn, lv_color_hex(0xEDEFF2), 0);
-    lv_obj_set_width(g_lbl_conn, LV_PCT(70));
-    lv_label_set_long_mode(g_lbl_conn, LV_LABEL_LONG_DOT);
     lv_obj_set_style_pad_left(g_lbl_conn, 2, 0);
-    lv_obj_set_style_pad_right(g_lbl_conn, 2, 0);
+    lv_obj_set_style_pad_right(g_lbl_conn, 8, 0);
     update_top_label();
 
     // Right controls (quiet switch, connected switch, settings gear)
@@ -734,19 +877,28 @@ static void build_ui() {
     lv_obj_set_style_bg_opa(right_grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(right_grp, 0, 0);
     lv_obj_set_style_pad_all(right_grp, 0, 0);
-    lv_obj_set_style_pad_column(right_grp, 8, 0);
+    lv_obj_set_style_pad_column(right_grp, 10, 0);
     lv_obj_set_flex_flow(right_grp, LV_FLEX_FLOW_ROW);
     lv_obj_set_size(right_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
-    lv_obj_t* sw_quiet = lv_switch_create(right_grp);
-    if (g_quiet_hours) lv_obj_add_state(sw_quiet, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw_quiet, on_switch_quiet_toggle, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(sw_quiet, on_switch_quiet_toggle, LV_EVENT_CLICKED,       nullptr);
+    // Quick-action pills instead of switches
+    g_btn_quiet = lv_btn_create(right_grp);
+    lv_obj_set_style_radius(g_btn_quiet, 999, 0);
+    lv_obj_set_style_pad_hor(g_btn_quiet, 12, 0);
+    lv_obj_set_style_pad_ver(g_btn_quiet, 6, 0);
+    lv_obj_set_style_border_width(g_btn_quiet, 1, 0);
+    lv_obj_set_style_border_color(g_btn_quiet, lv_color_hex(0x3A4048), 0);
+    { lv_obj_t* lbl = lv_label_create(g_btn_quiet); lv_label_set_text(lbl, "Quiet"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(g_btn_quiet, on_top_quiet_click, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* sw_conn = lv_switch_create(right_grp);
-    if (g_connected) lv_obj_add_state(sw_conn, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw_conn, on_switch_connected,   LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(sw_conn, on_switch_connected,   LV_EVENT_CLICKED,       nullptr);
+    g_btn_conn = lv_btn_create(right_grp);
+    lv_obj_set_style_radius(g_btn_conn, 999, 0);
+    lv_obj_set_style_pad_hor(g_btn_conn, 12, 0);
+    lv_obj_set_style_pad_ver(g_btn_conn, 6, 0);
+    lv_obj_set_style_border_width(g_btn_conn, 1, 0);
+    lv_obj_set_style_border_color(g_btn_conn, lv_color_hex(0x3A4048), 0);
+    { lv_obj_t* lbl = lv_label_create(g_btn_conn); lv_label_set_text(lbl, "Conn"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(g_btn_conn, on_top_conn_click, LV_EVENT_CLICKED, nullptr);
 
     // Camera open button
     lv_obj_t* btn_cam = lv_btn_create(right_grp);
@@ -771,14 +923,89 @@ static void build_ui() {
     { lv_obj_t* lbl = lv_label_create(btn_gear); lv_label_set_text(lbl, LV_SYMBOL_SETTINGS); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_gear, [](lv_event_t* /*e*/){ build_settings_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
 
-    // Center status label
-    g_lbl_status = lv_label_create(screen);
+    apply_top_buttons_state();
+
+    // Center dashboard card
+    g_dash_card = lv_obj_create(screen);
+    lv_obj_set_size(g_dash_card, LV_PCT(92), 360);
+    lv_obj_align(g_dash_card, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_set_style_bg_color(g_dash_card, lv_color_hex(0x16191D), 0);
+    lv_obj_set_style_bg_opa(g_dash_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_dash_card, 1, 0);
+    lv_obj_set_style_border_color(g_dash_card, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_radius(g_dash_card, 10, 0);
+    lv_obj_set_style_pad_hor(g_dash_card, 16, 0);
+    lv_obj_set_style_pad_ver(g_dash_card, 14, 0);
+    lv_obj_set_flex_flow(g_dash_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_dash_card, 12, 0);
+
+    // Hero area with ring and status label
+    g_dash_hero = lv_obj_create(g_dash_card);
+    lv_obj_set_size(g_dash_hero, LV_PCT(100), 220);
+    lv_obj_set_style_bg_color(g_dash_hero, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_opa(g_dash_hero, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_dash_hero, 1, 0);
+    lv_obj_set_style_border_color(g_dash_hero, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_radius(g_dash_hero, 8, 0);
+    lv_obj_set_style_pad_all(g_dash_hero, 0, 0);
+
+    g_dash_ring = lv_obj_create(g_dash_hero);
+    lv_obj_set_size(g_dash_ring, 200, 200);
+    lv_obj_set_style_bg_opa(g_dash_ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_dash_ring, 10, 0);
+    lv_obj_set_style_border_color(g_dash_ring, lv_color_hex(0x22AA22), 0);
+    lv_obj_set_style_radius(g_dash_ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_center(g_dash_ring);
+
+    g_lbl_status = lv_label_create(g_dash_hero);
     lv_label_set_text(g_lbl_status, "Calm");
     lv_obj_set_style_text_font(g_lbl_status, LV_FONT_DEFAULT, 0);
     lv_obj_set_style_text_color(g_lbl_status, lv_color_hex(0x22AA22), 0);
     lv_obj_set_style_text_align(g_lbl_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_letter_space(g_lbl_status, 2, 0);
-    lv_obj_align(g_lbl_status, LV_ALIGN_CENTER, 0, -140);
+    lv_obj_center(g_lbl_status);
+
+    // Stats row
+    lv_obj_t* stats = lv_obj_create(g_dash_card);
+    lv_obj_set_size(stats, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(stats, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(stats, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(stats, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(stats, 0, 0);
+    lv_obj_set_style_pad_all(stats, 0, 0);
+    lv_obj_set_style_pad_column(stats, 12, 0);
+    lv_obj_set_flex_flow(stats, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(stats, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    auto make_tile = [&](const char* title, lv_obj_t** outVal){
+        lv_obj_t* tile = lv_obj_create(stats);
+        lv_obj_set_size(tile, LV_PCT(32), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(tile, lv_color_hex(0x1E232A), 0);
+        lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(tile, 1, 0);
+        lv_obj_set_style_border_color(tile, lv_color_hex(0x2A2F36), 0);
+        lv_obj_set_style_radius(tile, 8, 0);
+        lv_obj_set_style_pad_hor(tile, 12, 0);
+        lv_obj_set_style_pad_ver(tile, 10, 0);
+        lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(tile, 6, 0);
+
+        lv_obj_t* t = lv_label_create(tile);
+        lv_label_set_text(t, title);
+        lv_obj_set_style_text_color(t, lv_color_hex(0x9AA3AD), 0);
+
+        lv_obj_t* v = lv_label_create(tile);
+        lv_obj_set_style_text_color(v, lv_color_hex(0xEDEFF2), 0);
+        lv_label_set_text(v, "--");
+        if (outVal) *outVal = v;
+        return tile;
+    };
+
+    make_tile("Connection", &g_stat_conn);
+    make_tile("Volume",     &g_stat_vol);
+    make_tile("Quiet Hours",&g_stat_qh);
+
+    update_dashboard();
 
     // Status buttons row
     lv_obj_t* row1 = lv_obj_create(screen);

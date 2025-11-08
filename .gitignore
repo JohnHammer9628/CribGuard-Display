@@ -1,3 +1,57 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
+sim.log
+
+# C/C++/MSVC build outputs
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.dll
+*.exe
+*.o
+*.a
+
+# CMake-generated files (anywhere)
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+CTestTestfile.cmake
+Testing/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+_deps/
+*.dir/
+*.ninja
+.ninja_log
+.ninja_deps
+
+# Common build directories
+build/
+build-*/
+build-win/
+build-win-*/
+build-vs/
+out/
+bin/
+lib/
+dist/
+Debug/
+Release/
+
+# VS
+.vs/
+
 @'
 # Build dirs
 /build/
