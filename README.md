@@ -1,250 +1,130 @@
 CribGuard Display — LVGL v9 + SDL2 Simulator (Windows)
 
-Run the CribGuard UI locally on Windows using LVGL v9 with the SDL2 backend.
-Build system: CMake + Ninja + vcpkg. IDE: VS Code (recommended).
+## Build & Run (Windows) — start here
 
-Current status: Simulator builds and runs in portrait 720×1280, shows the top status bar, state label, Calm/Cry/Motion, Play/Stop, and a volume slider.
+This is the minimal, copy‑pasteable flow to get a simulator window on screen.
 
-Next step (optional): Replace platforms/pi-sdl/main.cpp with the v2 file that tightens layout and adds keyboard shortcuts. (You have not applied this yet.)
-
-📋 Table of Contents
-
-Quick Start
-
-Initial Setup
-
-# CribGuard Display
-
-Run the CribGuard UI locally on Windows using LVGL v9 with the SDL2 backend (simulator).
-
-Build system: CMake + Ninja + vcpkg. Recommended IDE: Visual Studio Code.
-
-Status
-- Simulator builds and runs on Windows in portrait (720×1280).
-- Shows top status bar, state label, Calm/Cry/Motion indicators, Play/Stop controls and a volume slider.
-
-Table of contents
-- Quick start
-- Prerequisites
-- Build & run
-# CribGuard Display
-
-Run the CribGuard UI locally on Windows using LVGL v9 with the SDL2 backend (simulator).
-
-Build system: CMake + Ninja + vcpkg. Recommended IDE: Visual Studio Code.
-
-Status
-- Simulator builds and runs on Windows in portrait (720×1280).
-- Shows a top status bar, state label, Calm/Cry/Motion indicators, Play/Stop controls and a volume slider.
-
-## Table of contents
-- Quick start
-- Prerequisites
-- Build & run
-- One-liner (PowerShell)
-- Project structure
-- VS Code integration
-- Configuration reference
-- Testing & diagnostics
-- Troubleshooting
-- Roadmap
-- Contributing
-- License
-
----
-
-## Quick start
-
-After initial setup, the normal workflow is:
+### A) One‑time setup
 
 ```powershell
-cmake --preset win-rel
-cmake --build --preset win-rel
-.\build-win\crib_guard_pi.exe
-```
+# 1) Install MSVC toolchain + Ninja
+winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install -e --id Ninja-build.Ninja
 
-You should see a portrait 720×1280 window with the CribGuard UI. The process runs until you close the window.
-
-## Prerequisites (Windows 10 / 11)
-
-- Visual Studio Build Tools (MSVC C++ toolset + Windows SDK)
-- CMake (on PATH)
-- Ninja (on PATH)
-- vcpkg (recommended path: `C:\dev\vcpkg`)
-- Git
-- Visual Studio Code (recommended) with the C/C++ and CMake Tools extensions
-
-vcpkg quick setup (example):
-
-```powershell
-git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
+# 2) Install vcpkg
+git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg 2>$null
 C:\dev\vcpkg\bootstrap-vcpkg.bat
-C:\dev\vcpkg\vcpkg integrate install
+
+# 3) (If not already installed) GStreamer SDK via vcpkg (takes a while)
+C:\dev\vcpkg\vcpkg.exe install gstreamer[core,plugins-base,plugins-good,plugins-bad,plugins-ugly]:x64-windows
 ```
 
-Clone this repository:
+### B) Build & run in THIS terminal (every session)
 
 ```powershell
-git clone https://github.com/<your-org>/CribGuard-Display.git
-cd CribGuard-Display
-code .
+# 1) Load MSVC into this shell
+$vs = "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
+if (!(Test-Path $vs)) { $vs = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" }
+cmd /c """$vs"" -arch=x64 -host_arch=x64 && set" | % { if ($_ -match "^(.*?)=(.*)$") { Set-Item env:$($matches[1]) $matches[2] } }
+
+# 2) Configure (fresh dir) and build
+cd C:\Users\johnh\School\CPE190\CribGuard-Display
+if (Test-Path .\build-win-vcpkg) { Remove-Item .\build-win-vcpkg -Recurse -Force }
+cmake -S . -B build-win-vcpkg -G Ninja -DCMAKE_TOOLCHAIN_FILE=C:\dev\vcpkg\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build-win-vcpkg -j
+
+# 3) Run (make sure DLLs are found and window is visible)
+$env:PATH += ";C:\dev\vcpkg\installed\x64-windows\bin"
+$env:SDL_VIDEO_CENTERED = "1"; $env:SDL_VIDEO_WINDOW_POS = "100,100"
+.\build-win-vcpkg\crib_guard_pi.exe
 ```
 
-## Build & run (detailed)
-
-1) Configure
+If SDL2.dll is missing, copy the one already included in `build-win`:
 
 ```powershell
-cmake --preset win-rel
+Copy-Item .\build-win\SDL2.dll .\build-win-vcpkg\ -Force
+.\build-win-vcpkg\crib_guard_pi.exe
 ```
 
-2) Build
+Diagnostics:
 
 ```powershell
-cmake --build --preset win-rel
+Get-Content .\sim.log -Tail 100
 ```
 
-3) Run
+## Current UI (what you should see)
+
+- Top bar: brand label plus quick-action “Quiet” and “Connected” pills; buttons for Library, Lullabies, Cam, Settings.
+- Dashboard card: hero status ring (Calm/Cry/Motion color) and stats tiles (Connection, Volume, Quiet Hours).
+- Camera modal: header actions (Snapshot, Fullscreen, Close), video surface placeholder, Play/Pause/Stop, Mute, spinner shown briefly on Play.
+- Library modal: full-screen sheet with tabs (All, Photos, Recordings), placeholder content.
+- Lullabies modal: full-screen sheet, placeholder content.
+- Settings modal: dark-themed sheet (Default Volume slider, Quiet Hours enable, start/end hours).
+
+Log lines in `sim.log` include exact camera window and render-area sizes on open/fullscreen toggle.
+
+### Simulator input
+
+- Touch-first: tap/click to interact; modals close via Close button or backdrop tap (no keyboard shortcuts).
+- Mouse wheel is enabled for scrolling tests (e.g., Library/Lullabies lists).
+
+## Repository structure (high level)
+
+- `platforms/pi-sdl/main.cpp` — LVGL v9 + SDL simulator entry and all current UI.
+- `config/lv_conf.h` — LVGL configuration (ensure `LV_USE_SDL 1`).
+- `build-win-vcpkg/` — generated build output (after configure).
+- `assets/` — images/fonts (if any).
+- `.gitignore` — ignores build outputs and logs.
+
+## Common tasks (cheat sheet)
 
 ```powershell
-.\build-win\crib_guard_pi.exe
+# Reconfigure in a fresh dir
+if (Test-Path .\build-win-vcpkg) { Remove-Item .\build-win-vcpkg -Recurse -Force }
+cmake -S . -B build-win-vcpkg -G Ninja -DCMAKE_TOOLCHAIN_FILE=C:\dev\vcpkg\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+
+# Build + run
+cmake --build build-win-vcpkg -j
+$env:PATH += ";C:\dev\vcpkg\installed\x64-windows\bin"
+$env:SDL_VIDEO_CENTERED = "1"; $env:SDL_VIDEO_WINDOW_POS = "100,100"
+.\build-win-vcpkg\crib_guard_pi.exe
+
+# Tail logs
+Get-Content .\sim.log -Tail 100 -Wait
 ```
 
-Clean rebuild (if needed):
+## Troubleshooting (quick)
 
-```powershell
-Remove-Item -Recurse -Force .\build-win -ErrorAction SilentlyContinue
-cmake --preset win-rel
-cmake --build --preset win-rel
-.\build-win\crib_guard_pi.exe
+- No window shows up: set `SDL_VIDEO_CENTERED=1` and `SDL_VIDEO_WINDOW_POS=100,100` (see commands above).
+- Missing SDL2.dll: copy from `build-win/SDL2.dll` to `build-win-vcpkg/`.
+- “Compiler not found”: load MSVC env with `VsDevCmd.bat` as shown in Build & Run.
+
+## Raspberry Pi (Bookworm) quick reference
+
+On each Pi:
+
+```bash
+sudo apt update
+sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-libav gstreamer1.0-gl
+# Camera Pi (libcamera source)
+sudo apt install -y libcamera-apps gstreamer1.0-libcamera || true
 ```
 
-Expected console messages
-
-```
-[INFO] LVGL 9.2.0 init ok
-[INFO] HAL init ok (SDL window 720x1280)
-[INFO] Entering main loop...
-```
-
-## One-liner (PowerShell)
-
-This script configures, builds and runs the simulator (invokes the Visual Studio dev command script):
-
-```powershell
-Remove-Item -Recurse -Force build-win -ErrorAction SilentlyContinue
-
-$env:VCPKG_ROOT = "C:\dev\vcpkg"
-$env:CMAKE_TOOLCHAIN_FILE = "$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
-$env:CMAKE_PREFIX_PATH   = "$env:VCPKG_ROOT\installed\x64-windows"
-
-$vs = (Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\Common7\Tools\VsDevCmd.bat' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-
-cmd /c "`\"$vs`\" -arch=amd64 && cmake -S . -B build-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=%CMAKE_TOOLCHAIN_FILE% -DCMAKE_PREFIX_PATH=%CMAKE_PREFIX_PATH% -DCMAKE_BUILD_TYPE=Release && ninja -C build-win && build-win\crib_guard_pi.exe"
-```
-
-If you want to only build (no auto-run), remove the final `&& build-win\crib_guard_pi.exe`.
-
-## Project structure (high level)
-
-- `CMakeLists.txt` — top-level CMake
-- `CMakePresets.json` — configure/build presets (includes `win-rel`)
-- `platforms/pi-sdl/main.cpp` — simulator entry (SDL backend)
-- `ui/ui.cpp`, `ui/ui.h` — UI implementation
-- `config/lv_conf.h` — LVGL configuration
-- `build-win/` — generated build output (Ninja files, executable)
-
-Executable: `build-win/crib_guard_pi.exe`
-
-Note: there is an alternate `main.cpp` (v2) available that tightens layout and adds keyboard shortcuts — not applied by default.
-
-## VS Code integration
-
-Create `.vscode/tasks.json` and `.vscode/launch.json` for one-click build/run and debugging. Example `tasks.json`:
-
-```json
-{
-  "version": "2.0.0",
-  "tasks": [
-    { "label": "Configure (win-rel)", "type": "shell", "command": "cmake --preset win-rel" },
-    { "label": "Build (win-rel)", "type": "shell", "command": "cmake --build --preset win-rel", "dependsOn": "Configure (win-rel)", "problemMatcher": "$msCompile" },
-    { "label": "Run simulator", "type": "shell", "command": ".\\build-win\\crib_guard_pi.exe" },
-    { "label": "Build & Run (win-rel)", "type": "shell", "dependsOn": ["Build (win-rel)"], "command": ".\\build-win\\crib_guard_pi.exe" }
-  ]
-}
-```
-
-Example `launch.json` for the Microsoft C++ debugger:
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Debug LVGL Simulator (win-rel)",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}\\build-win\\crib_guard_pi.exe",
-      "cwd": "${workspaceFolder}",
-      "preLaunchTask": "Build (win-rel)"
-    }
-  ]
-}
-```
-
-Usage: `Ctrl+Shift+B` → Build & Run (win-rel). Press `F5` to debug.
-
-## Configuration reference
-
-`CMakePresets.json` includes a `win-rel` preset used by the instructions above. Important fields:
-
-- `CMAKE_TOOLCHAIN_FILE` — point to `C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake` when using vcpkg
-- `VCPKG_TARGET_TRIPLET` — typically `x64-windows`
-- `jobs` in buildPresets — set to `0` to let Ninja/CMake pick cores automatically
-
-If you see an error like `jobs expected an integer, got: max`, set `jobs` to `0`.
-
-## Testing & diagnostics
-
-Run the simulator and observe stdout/stderr:
-
-```powershell
-.\build-win\crib_guard_pi.exe
-```
-
-If enabled, view the sim log:
-
-```powershell
-cd build-win
-Get-Content .\sim.log -Tail 200 -Wait
-```
-
-Check executable DLL dependencies (example using dumpbin):
-
-```powershell
-& "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\<version>\bin\Hostx64\x64\dumpbin.exe" /DEPENDENTS .\build-win\crib_guard_pi.exe
-```
-
-You should see `SDL2.dll` and MSVC runtime DLLs listed.
-
-## Troubleshooting
-
-- Simulator closes immediately: run from PowerShell to view errors:
-
-```powershell
-.\build-win\crib_guard_pi.exe
-```
-
-- If it still exits, perform a clean rebuild (see 'Clean rebuild' above).
-- "SDL headers not found": ensure `LV_USE_SDL` is enabled in `config/lv_conf.h` and reconfigure with the vcpkg toolchain file set.
+We’ll add receiver (Display Pi) and sender (Camera Pi) commands once streaming is wired in this repo.
 
 ## Roadmap / optional improvements
 
-- Replace `platforms/pi-sdl/main.cpp` with a v2 that adds keyboard shortcuts and tighter layout.
-  - Suggested shortcuts: `1`=Calm, `2`=Cry, `3`=Motion, `P`=Play, `S`=Stop, `←/→` volume, `Esc` quit.
-- Add SquareLine Studio workflow to allow visual UI authoring and safe `ui/` module overwrites.
-- Add simulated data feeds (fake Calm/Cry/Motion messages) for faster UI iteration.
-- Target hardware ports: ESP32-S3 panel, Raspberry Pi Touch Display.
+- Near-term
+  - GStreamer test pipeline (videotestsrc → appsink) rendered into the camera video surface; Play/Pause/Stop control the pipeline.
+  - RTP/UDP H.264 receiver (udpsrc → rtph264depay → avdec_h264 → convert/scale → appsink); auto-fit to live `video_surface` size.
+  - Library: wire thumbnails grid, detail viewer, basic delete/export; storage path and quota in Settings.
+  - Lullabies: preset list (play/stop/loop, per-track volume), optional sleep timer.
+  - Settings: stream host/port and latency; recording/photo quality; storage quota and auto-delete policy.
+
+- Longer-term
+  - Recording controls (REC toggle, timer overlay), snapshots; write media to disk and surface in Library.
+  - Basic analytics and health overlay (FPS, drops, CPU).
+  - Optional keyboard shortcuts for simulator.
 
 ## Contributing
 
@@ -253,13 +133,3 @@ Contributions welcome. Please open issues or pull requests for bug fixes, improv
 ## License
 
 See `LICENSE` (if present) or add your preferred license.
-
----
-
-If you'd like, I can also:
-
-- add a short badge/header with build status or platform notes
-- commit a `tasks.json` / `launch.json` example into `.vscode/`
-- provide the v2 `main.cpp` and apply it behind a feature branch
-
-— end of README

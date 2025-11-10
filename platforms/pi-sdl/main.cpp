@@ -87,6 +87,106 @@ static void log_line(const char* msg) {
     if (g_log) { std::fprintf(g_log, "%s\n", msg); std::fflush(g_log); }
 }
 
+// ---------- Theme (tokens & helpers) ----------
+namespace theme {
+    static inline lv_color_t surface_bg()      { return lv_color_hex(0x16191D); }
+    static inline lv_color_t header_bg()       { return lv_color_hex(0x1E232A); }
+    static inline lv_color_t border()          { return lv_color_hex(0x2A2F36); }
+    static inline lv_color_t text_main()       { return lv_color_hex(0xEDEFF2); }
+    static inline lv_color_t text_subtle()     { return lv_color_hex(0x9AA3AD); }
+    static inline lv_color_t tonal_bg()        { return lv_color_hex(0x2A2F36); }
+    static inline lv_color_t tonal_border()    { return lv_color_hex(0x3A4048); }
+    static inline lv_color_t primary_accent()  { return lv_color_hex(0x7FB3FF); }
+
+    static constexpr int sp4  = 4;
+    static constexpr int sp6  = 6;
+    static constexpr int sp8  = 8;
+    static constexpr int sp10 = 10;
+    static constexpr int sp12 = 12;
+    static constexpr int sp14 = 14;
+    static constexpr int sp16 = 16;
+
+    static constexpr int radius_sm = 6;
+    static constexpr int radius_md = 8;
+    static constexpr int radius_lg = 10;
+    static constexpr int radius_pill = 999;
+}
+
+static void style_button_tonal(lv_obj_t* btn) {
+    lv_obj_set_style_radius(btn, theme::radius_sm, 0);
+    lv_obj_set_style_bg_color(btn, theme::tonal_bg(), 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_border_color(btn, theme::tonal_border(), 0);
+    lv_obj_set_style_pad_hor(btn, theme::sp12, 0);
+    lv_obj_set_style_pad_ver(btn, theme::sp8, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_50, LV_STATE_PRESSED);
+}
+
+static void style_button_pill(lv_obj_t* btn) {
+    lv_obj_set_style_radius(btn, theme::radius_pill, 0);
+    lv_obj_set_style_bg_color(btn, theme::tonal_bg(), 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_border_color(btn, theme::tonal_border(), 0);
+    lv_obj_set_style_pad_hor(btn, theme::sp12, 0);
+    lv_obj_set_style_pad_ver(btn, theme::sp6, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_50, LV_STATE_PRESSED);
+}
+
+static void style_sheet(lv_obj_t* sheet) {
+    lv_obj_clear_flag(sheet, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(sheet, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(sheet, theme::surface_bg(), 0);
+    lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(sheet, theme::text_main(), 0);
+    lv_obj_set_style_border_width(sheet, 1, 0);
+    lv_obj_set_style_border_color(sheet, theme::border(), 0);
+    lv_obj_set_style_radius(sheet, theme::radius_lg, 0);
+    lv_obj_set_style_shadow_width(sheet, 18, 0);
+    lv_obj_set_style_shadow_opa(sheet, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_color(sheet, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_pad_hor(sheet, theme::sp16, 0);
+    lv_obj_set_style_pad_ver(sheet, theme::sp14, 0);
+    lv_obj_set_flex_flow(sheet, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(sheet, theme::sp12, 0);
+}
+
+static lv_obj_t* build_header(lv_obj_t* sheet, const char* title, lv_obj_t** out_actions) {
+    lv_obj_t* hdr = lv_obj_create(sheet);
+    lv_obj_set_size(hdr, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(hdr, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(hdr, theme::header_bg(), 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(hdr, 1, 0);
+    lv_obj_set_style_border_color(hdr, theme::border(), 0);
+    lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_pad_all(hdr, 0, 0);
+    lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_ver(hdr, theme::sp8, 0);
+    lv_obj_set_style_pad_right(hdr, theme::sp8, 0);
+
+    lv_obj_t* lbl_title = lv_label_create(hdr);
+    lv_label_set_text(lbl_title, title);
+    lv_obj_set_style_text_color(lbl_title, theme::text_main(), 0);
+    lv_obj_set_style_pad_left(lbl_title, theme::sp8, 0);
+
+    lv_obj_t* actions = lv_obj_create(hdr);
+    lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(actions, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(actions, 0, 0);
+    lv_obj_set_style_pad_all(actions, 0, 0);
+    lv_obj_set_style_pad_column(actions, theme::sp8, 0);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(actions, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+    if (out_actions) *out_actions = actions;
+    return hdr;
+}
+
 // ---------- App state ----------
 static lv_obj_t* g_lbl_status = nullptr; // Center status
 static lv_obj_t* g_lbl_conn   = nullptr; // Top bar label
@@ -112,6 +212,12 @@ static lv_obj_t* g_stat_qh   = nullptr;
 static lv_obj_t* g_btn_quiet = nullptr;
 static lv_obj_t* g_btn_conn = nullptr;
 
+// Library & Lullabies modals
+static lv_obj_t* g_library_modal = nullptr;
+static lv_obj_t* g_library_sheet = nullptr;
+static lv_obj_t* g_lullabies_modal = nullptr;
+static lv_obj_t* g_lullabies_sheet = nullptr;
+
 static bool   g_connected   = true;
 static bool   g_quiet_hours = false;
 static int    g_quiet_start = 18; // 24h
@@ -130,6 +236,10 @@ static void update_dashboard();
 static void apply_top_buttons_state();
 static void on_top_quiet_click(lv_event_t* e);
 static void on_top_conn_click(lv_event_t* e);
+static void build_library_dialog(lv_obj_t* parent);
+static void close_library();
+static void build_lullabies_dialog(lv_obj_t* parent);
+static void close_lullabies();
 static std::string format_hour12(int hour24) {
     int h = ((hour24 % 24) + 24) % 24;
     int display = h % 12;
@@ -166,6 +276,156 @@ static void on_btn_status(lv_event_t* e) {
         set_status_text("Cry", lv_color_hex(0xCC2222));
     } else if (std::string(role) == "motion") {
         set_status_text("Motion", lv_color_hex(0xD08770));
+    }
+}
+
+// ---------- Library dialog ----------
+static void build_library_dialog(lv_obj_t* parent) {
+    if (g_library_modal) return;
+
+    g_library_modal = lv_obj_create(parent);
+    lv_obj_remove_style_all(g_library_modal);
+    lv_obj_set_size(g_library_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(g_library_modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_library_modal, LV_OPA_30, 0);
+    lv_obj_add_flag(g_library_modal, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* sheet = lv_obj_create(g_library_modal);
+    lv_obj_set_size(sheet, LV_PCT(94), LV_PCT(94));
+    lv_obj_center(sheet);
+    g_library_sheet = sheet;
+
+    style_sheet(sheet);
+
+    // header
+    lv_obj_t* hdr_btns = nullptr;
+    build_header(sheet, "Library", &hdr_btns);
+
+    lv_obj_t* btn_close = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_close);
+    { lv_obj_t* lbl = lv_label_create(btn_close); lv_label_set_text(lbl, "Close"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_close, [](lv_event_t* /*e*/){ close_library(); }, LV_EVENT_CLICKED, nullptr);
+
+    // tabs row
+    lv_obj_t* tabs = lv_obj_create(sheet);
+    lv_obj_set_size(tabs, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(tabs, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(tabs, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(tabs, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tabs, 0, 0);
+    lv_obj_set_style_pad_all(tabs, 0, 0);
+    lv_obj_set_style_pad_column(tabs, 10, 0);
+    lv_obj_set_flex_flow(tabs, LV_FLEX_FLOW_ROW);
+
+    auto lib_pill = [&](const char* text){
+        lv_obj_t* b = lv_btn_create(tabs);
+        lv_obj_set_style_radius(b, 999, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x2A2F36), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x3A4048), 0);
+        lv_obj_set_style_pad_hor(b, 12, 0);
+        lv_obj_set_style_pad_ver(b, 6, 0);
+        { lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, text); lv_obj_center(l); }
+        return b;
+    };
+    lib_pill("All"); lib_pill("Photos"); lib_pill("Recordings");
+
+    // content placeholder
+    lv_obj_t* content = lv_obj_create(sheet);
+    lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(content, 1);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(content, 1, 0);
+    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_radius(content, 8, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    {
+        lv_obj_t* lbl = lv_label_create(content);
+        lv_label_set_text(lbl, "Library coming soon");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x9AA3AD), 0);
+        lv_obj_center(lbl);
+    }
+
+    // backdrop click to close
+    lv_obj_add_event_cb(g_library_modal, [](lv_event_t* e){
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED) { close_library(); }
+    }, LV_EVENT_CLICKED, nullptr);
+
+    log_line("[UI] library opened");
+}
+
+static void close_library() {
+    if (g_library_modal) {
+        lv_obj_del(g_library_modal);
+        g_library_modal = nullptr;
+        g_library_sheet = nullptr;
+        log_line("[UI] library closed");
+    }
+}
+
+// ---------- Lullabies dialog ----------
+static void build_lullabies_dialog(lv_obj_t* parent) {
+    if (g_lullabies_modal) return;
+
+    g_lullabies_modal = lv_obj_create(parent);
+    lv_obj_remove_style_all(g_lullabies_modal);
+    lv_obj_set_size(g_lullabies_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(g_lullabies_modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_lullabies_modal, LV_OPA_30, 0);
+    lv_obj_add_flag(g_lullabies_modal, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* sheet = lv_obj_create(g_lullabies_modal);
+    lv_obj_set_size(sheet, LV_PCT(94), LV_PCT(94));
+    lv_obj_center(sheet);
+    g_lullabies_sheet = sheet;
+
+    style_sheet(sheet);
+
+    // header
+    lv_obj_t* hdr_btns = nullptr;
+    build_header(sheet, "Lullabies", &hdr_btns);
+
+    lv_obj_t* btn_close2 = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_close2);
+    { lv_obj_t* lbl = lv_label_create(btn_close2); lv_label_set_text(lbl, "Close"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_close2, [](lv_event_t* /*e*/){ close_lullabies(); }, LV_EVENT_CLICKED, nullptr);
+
+    // content placeholder
+    lv_obj_t* content = lv_obj_create(sheet);
+    lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(content, 1);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(content, 1, 0);
+    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_radius(content, 8, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    {
+        lv_obj_t* lbl = lv_label_create(content);
+        lv_label_set_text(lbl, "Lullabies coming soon");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x9AA3AD), 0);
+        lv_obj_center(lbl);
+    }
+
+    lv_obj_add_event_cb(g_lullabies_modal, [](lv_event_t* e){
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED) { close_lullabies(); }
+    }, LV_EVENT_CLICKED, nullptr);
+
+    log_line("[UI] lullabies opened");
+}
+
+static void close_lullabies() {
+    if (g_lullabies_modal) {
+        lv_obj_del(g_lullabies_modal);
+        g_lullabies_modal = nullptr;
+        g_lullabies_sheet = nullptr;
+        log_line("[UI] lullabies closed");
     }
 }
 
@@ -228,75 +488,19 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_style_max_height(sheet, LV_PCT(90), 0);
     lv_obj_center(sheet);
 
-    lv_obj_clear_flag(sheet, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(sheet, LV_SCROLLBAR_MODE_OFF);
-
-    lv_obj_set_style_pad_hor(sheet, 16, 0);
-    lv_obj_set_style_pad_ver(sheet, 14, 0);
-    lv_obj_set_style_bg_color(sheet, lv_color_hex(0x16191D), 0);
-    lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(sheet, lv_color_hex(0xEDEFF2), 0);
-    lv_obj_set_style_border_width(sheet, 1, 0);
-    lv_obj_set_style_border_color(sheet, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_radius(sheet, 10, 0);
-    lv_obj_set_style_shadow_width(sheet, 18, 0);
-    lv_obj_set_style_shadow_opa(sheet, LV_OPA_30, 0);
-    lv_obj_set_style_shadow_color(sheet, lv_color_hex(0x000000), 0);
-
-    lv_obj_set_flex_flow(sheet, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(sheet, 12, 0);
+    style_sheet(sheet);
 
     // header row
-    lv_obj_t* row_hdr = lv_obj_create(sheet);
-    lv_obj_set_size(row_hdr, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_clear_flag(row_hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(row_hdr, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(row_hdr, lv_color_hex(0x1E232A), 0);
-    lv_obj_set_style_bg_opa(row_hdr, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(row_hdr, 1, 0);
-    lv_obj_set_style_border_color(row_hdr, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_border_side(row_hdr, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_pad_all(row_hdr, 0, 0);
-    lv_obj_set_flex_flow(row_hdr, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_ver(row_hdr, 6, 0);
-    lv_obj_set_style_pad_right(row_hdr, 8, 0);
-
-    lv_obj_t* lbl_title = lv_label_create(row_hdr);
-    lv_label_set_text(lbl_title, "Settings");
-    lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xEDEFF2), 0);
-
-    lv_obj_t* hdr_btns = lv_obj_create(row_hdr);
-    lv_obj_clear_flag(hdr_btns, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(hdr_btns, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_opa(hdr_btns, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(hdr_btns, 0, 0);
-    lv_obj_set_style_pad_all(hdr_btns, 0, 0);
-    lv_obj_set_style_pad_column(hdr_btns, 8, 0);
-    lv_obj_set_flex_flow(hdr_btns, LV_FLEX_FLOW_ROW);
-    lv_obj_set_size(hdr_btns, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_t* hdr_btns = nullptr;
+    build_header(sheet, "Settings", &hdr_btns);
 
     lv_obj_t* btn_cancel = lv_btn_create(hdr_btns);
-    lv_obj_set_size(btn_cancel, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(btn_cancel, 6, 0);
-    lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_cancel, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_cancel, 1, 0);
-    lv_obj_set_style_border_color(btn_cancel, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_cancel, 12, 0);
-    lv_obj_set_style_pad_ver(btn_cancel, 8, 0);
+    style_button_tonal(btn_cancel);
     { lv_obj_t* lbl = lv_label_create(btn_cancel); lv_label_set_text(lbl, "Cancel"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_cancel, [](lv_event_t* /*e*/){ close_settings(); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_save = lv_btn_create(hdr_btns);
-     lv_obj_set_size(btn_save, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(btn_save, 6, 0);
-    lv_obj_set_style_bg_color(btn_save, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_save, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_save, 1, 0);
-    lv_obj_set_style_border_color(btn_save, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_save, 12, 0);
-    lv_obj_set_style_pad_ver(btn_save, 8, 0);
+    style_button_tonal(btn_save);
     { lv_obj_t* lbl = lv_label_create(btn_save); lv_label_set_text(lbl, "Save"); lv_obj_center(lbl); }
 
     auto make_row = [&](const char* left, lv_obj_t** outRow){
@@ -451,87 +655,27 @@ static void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_flex_flow(sheet, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(sheet, 12, 0);
 
-    // header row
-    lv_obj_t* row_hdr = lv_obj_create(sheet);
-    lv_obj_set_size(row_hdr, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_clear_flag(row_hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(row_hdr, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(row_hdr, lv_color_hex(0x1E232A), 0);
-    lv_obj_set_style_bg_opa(row_hdr, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(row_hdr, 1, 0);
-    lv_obj_set_style_border_color(row_hdr, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_border_side(row_hdr, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_pad_all(row_hdr, 0, 0);
-    lv_obj_set_flex_flow(row_hdr, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row_hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_ver(row_hdr, 6, 0);
-    lv_obj_set_style_pad_right(row_hdr, 8, 0);
-
-    // left group: title + meta
-    lv_obj_t* hdr_left = lv_obj_create(row_hdr);
-    lv_obj_clear_flag(hdr_left, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(hdr_left, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_opa(hdr_left, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(hdr_left, 0, 0);
-    lv_obj_set_style_pad_all(hdr_left, 0, 0);
-    lv_obj_set_style_pad_left(hdr_left, 8, 0);
-    lv_obj_set_style_pad_column(hdr_left, 10, 0);
-    lv_obj_set_flex_flow(hdr_left, LV_FLEX_FLOW_ROW);
-    lv_obj_set_size(hdr_left, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-    lv_obj_t* lbl_title = lv_label_create(hdr_left);
-    lv_label_set_text(lbl_title, "Camera");
-    lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xEDEFF2), 0);
-
-    g_cam_meta_label = lv_label_create(hdr_left);
+    // header row (title + actions)
+    lv_obj_t* hdr_btns = nullptr;
+    lv_obj_t* camera_hdr = build_header(sheet, "Camera", &hdr_btns);
+    g_cam_meta_label = lv_label_create(camera_hdr);
     lv_label_set_text(g_cam_meta_label, "Idle");
-    lv_obj_set_style_text_color(g_cam_meta_label, lv_color_hex(0x9AA3AD), 0);
-
-    lv_obj_t* hdr_btns = lv_obj_create(row_hdr);
-    lv_obj_clear_flag(hdr_btns, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(hdr_btns, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_opa(hdr_btns, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(hdr_btns, 0, 0);
-    lv_obj_set_style_pad_all(hdr_btns, 0, 0);
-    lv_obj_set_style_pad_column(hdr_btns, 8, 0);
-    lv_obj_set_flex_flow(hdr_btns, LV_FLEX_FLOW_ROW);
-    lv_obj_set_size(hdr_btns, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_color(g_cam_meta_label, theme::text_subtle(), 0);
 
     // Snapshot button
     lv_obj_t* btn_snap = lv_btn_create(hdr_btns);
-    lv_obj_set_size(btn_snap, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(btn_snap, 6, 0);
-    lv_obj_set_style_bg_color(btn_snap, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_snap, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_snap, 1, 0);
-    lv_obj_set_style_border_color(btn_snap, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_snap, 12, 0);
-    lv_obj_set_style_pad_ver(btn_snap, 8, 0);
+    style_button_tonal(btn_snap);
     { lv_obj_t* lbl = lv_label_create(btn_snap); lv_label_set_text(lbl, "Snapshot"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_snap, on_cam_snapshot, LV_EVENT_CLICKED, nullptr);
 
     // Fullscreen button
     g_cam_btn_full = lv_btn_create(hdr_btns);
-    lv_obj_set_size(g_cam_btn_full, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(g_cam_btn_full, 6, 0);
-    lv_obj_set_style_bg_color(g_cam_btn_full, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(g_cam_btn_full, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(g_cam_btn_full, 1, 0);
-    lv_obj_set_style_border_color(g_cam_btn_full, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(g_cam_btn_full, 12, 0);
-    lv_obj_set_style_pad_ver(g_cam_btn_full, 8, 0);
+    style_button_tonal(g_cam_btn_full);
     { lv_obj_t* lbl = lv_label_create(g_cam_btn_full); lv_label_set_text(lbl, "Fullscreen"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(g_cam_btn_full, on_cam_fullscreen, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_close = lv_btn_create(hdr_btns);
-    lv_obj_set_size(btn_close, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(btn_close, 6, 0);
-    lv_obj_set_style_bg_color(btn_close, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_close, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_close, 1, 0);
-    lv_obj_set_style_border_color(btn_close, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_close, 12, 0);
-    lv_obj_set_style_pad_ver(btn_close, 8, 0);
+    style_button_tonal(btn_close);
     { lv_obj_t* lbl = lv_label_create(btn_close); lv_label_set_text(lbl, "Close"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_close, [](lv_event_t* /*e*/){ close_camera(); }, LV_EVENT_CLICKED, nullptr);
 
@@ -881,45 +1025,41 @@ static void build_ui() {
     lv_obj_set_flex_flow(right_grp, LV_FLEX_FLOW_ROW);
     lv_obj_set_size(right_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
+    // Library button
+    {
+        lv_obj_t* btn = lv_btn_create(right_grp);
+        style_button_tonal(btn);
+        { lv_obj_t* lbl = lv_label_create(btn); lv_label_set_text(lbl, "Library"); lv_obj_center(lbl); }
+        lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_library_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Lullabies button
+    {
+        lv_obj_t* btn = lv_btn_create(right_grp);
+        style_button_tonal(btn);
+        { lv_obj_t* lbl = lv_label_create(btn); lv_label_set_text(lbl, "Lullabies"); lv_obj_center(lbl); }
+        lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_lullabies_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
+    }
+
     // Quick-action pills instead of switches
     g_btn_quiet = lv_btn_create(right_grp);
-    lv_obj_set_style_radius(g_btn_quiet, 999, 0);
-    lv_obj_set_style_pad_hor(g_btn_quiet, 12, 0);
-    lv_obj_set_style_pad_ver(g_btn_quiet, 6, 0);
-    lv_obj_set_style_border_width(g_btn_quiet, 1, 0);
-    lv_obj_set_style_border_color(g_btn_quiet, lv_color_hex(0x3A4048), 0);
+    style_button_pill(g_btn_quiet);
     { lv_obj_t* lbl = lv_label_create(g_btn_quiet); lv_label_set_text(lbl, "Quiet"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(g_btn_quiet, on_top_quiet_click, LV_EVENT_CLICKED, nullptr);
 
     g_btn_conn = lv_btn_create(right_grp);
-    lv_obj_set_style_radius(g_btn_conn, 999, 0);
-    lv_obj_set_style_pad_hor(g_btn_conn, 12, 0);
-    lv_obj_set_style_pad_ver(g_btn_conn, 6, 0);
-    lv_obj_set_style_border_width(g_btn_conn, 1, 0);
-    lv_obj_set_style_border_color(g_btn_conn, lv_color_hex(0x3A4048), 0);
+    style_button_pill(g_btn_conn);
     { lv_obj_t* lbl = lv_label_create(g_btn_conn); lv_label_set_text(lbl, "Conn"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(g_btn_conn, on_top_conn_click, LV_EVENT_CLICKED, nullptr);
 
     // Camera open button
     lv_obj_t* btn_cam = lv_btn_create(right_grp);
-    lv_obj_set_style_radius(btn_cam, 6, 0);
-    lv_obj_set_style_bg_color(btn_cam, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_cam, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_cam, 1, 0);
-    lv_obj_set_style_border_color(btn_cam, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_cam, 12, 0);
-    lv_obj_set_style_pad_ver(btn_cam, 8, 0);
+    style_button_tonal(btn_cam);
     { lv_obj_t* lbl = lv_label_create(btn_cam); lv_label_set_text(lbl, "Cam"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_cam, [](lv_event_t* /*e*/){ build_camera_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_gear = lv_btn_create(right_grp);
-    lv_obj_set_style_radius(btn_gear, 6, 0);
-    lv_obj_set_style_bg_color(btn_gear, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_gear, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_gear, 1, 0);
-    lv_obj_set_style_border_color(btn_gear, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_gear, 12, 0);
-    lv_obj_set_style_pad_ver(btn_gear, 8, 0);
+    style_button_tonal(btn_gear);
     { lv_obj_t* lbl = lv_label_create(btn_gear); lv_label_set_text(lbl, LV_SYMBOL_SETTINGS); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_gear, [](lv_event_t* /*e*/){ build_settings_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
 
@@ -962,7 +1102,7 @@ static void build_ui() {
     lv_obj_set_style_text_font(g_lbl_status, LV_FONT_DEFAULT, 0);
     lv_obj_set_style_text_color(g_lbl_status, lv_color_hex(0x22AA22), 0);
     lv_obj_set_style_text_align(g_lbl_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_letter_space(g_lbl_status, 2, 0);
+    lv_obj_set_style_text_letter_space(g_lbl_status, 1, 0);
     lv_obj_center(g_lbl_status);
 
     // Stats row
@@ -1117,32 +1257,22 @@ int main() {
     }
     log_line("[SIM] SDL window created 1280x720");
 
-    // Attach input devices (mouse, keyboard, wheel) if headers were found
+    // Attach pointer input for touchscreen simulation (uses SDL pointer)
 #if HAVE_SDL_MOUSE
     {
         lv_indev_t* m = lv_sdl_mouse_create();
-        if (m) log_line("[SIM] SDL mouse attached");
-        else   log_line("[SIM] WARNING: SDL mouse create returned null");
+        if (m) log_line("[SIM] pointer input attached");
+        else   log_line("[SIM] WARNING: pointer input create returned null");
     }
 #else
-    log_line("[SIM] WARNING: SDL mouse header not found; no pointer input");
-#endif
-
-#if HAVE_SDL_KBD
-    {
-        lv_indev_t* k = lv_sdl_keyboard_create();
-        if (k) log_line("[SIM] SDL keyboard attached");
-        else   log_line("[SIM] WARNING: SDL keyboard create returned null");
-    }
-#else
-    log_line("[SIM] NOTE: SDL keyboard header not found");
+    log_line("[SIM] WARNING: SDL pointer header not found; no touch input");
 #endif
 
 #if HAVE_SDL_WHEEL
     {
         lv_indev_t* w = lv_sdl_mousewheel_create();
-        if (w) log_line("[SIM] SDL mousewheel attached");
-        else   log_line("[SIM] WARNING: SDL mousewheel create returned null");
+        if (w) log_line("[SIM] mousewheel attached");
+        else   log_line("[SIM] WARNING: mousewheel create returned null");
     }
 #endif
 
