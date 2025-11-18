@@ -12,6 +12,17 @@ extern "C" {
   #include "lvgl.h"
 }
 
+// SDL header for runtime display size detection (auto-fit to active mode)
+#if __has_include("SDL.h")
+  #include "SDL.h"
+  #define HAVE_SDL2_HEADER 1
+#elif __has_include("SDL2/SDL.h")
+  #include "SDL2/SDL.h"
+  #define HAVE_SDL2_HEADER 1
+#else
+  #define HAVE_SDL2_HEADER 0
+#endif
+
 // ---- Probe LVGL v9 SDL headers under different include roots ----
 #if __has_include("lvgl/src/drivers/sdl/lv_sdl_window.h")
   #include "lvgl/src/drivers/sdl/lv_sdl_window.h"
@@ -1245,9 +1256,24 @@ int main() {
     lv_init();
     log_line("[SIM] lv_init ok");
 
-    // 1280x720 landscape
-    constexpr int SCR_W = 1280;
-    constexpr int SCR_H = 720;
+  // Determine target window size. Default to 1280x720 landscape,
+  // but if SDL is available at compile-time, query current display mode
+  // and normalize to landscape so the UI lays out correctly.
+  int SCR_W = 1280;
+  int SCR_H = 720;
+#if HAVE_SDL2_HEADER
+  {
+      if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+          SDL_DisplayMode mode;
+          if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.w > 0 && mode.h > 0) {
+              SCR_W = mode.w;
+              SCR_H = mode.h;
+              if (SCR_W < SCR_H) { int t = SCR_W; SCR_W = SCR_H; SCR_H = t; }
+          }
+          SDL_QuitSubSystem(SDL_INIT_VIDEO);
+      }
+  }
+#endif
 
     lv_display_t* disp = lv_sdl_window_create(SCR_W, SCR_H);
     if (!disp) {
@@ -1255,7 +1281,11 @@ int main() {
         if (g_log) std::fclose(g_log);
         return 1;
     }
-    log_line("[SIM] SDL window created 1280x720");
+  {
+      char buf[96];
+      std::snprintf(buf, sizeof(buf), "[SIM] SDL window created %dx%d", SCR_W, SCR_H);
+      log_line(buf);
+  }
 
     // Attach pointer input for touchscreen simulation (uses SDL pointer)
 #if HAVE_SDL_MOUSE

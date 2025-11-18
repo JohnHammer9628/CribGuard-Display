@@ -44,8 +44,24 @@
 #define LV_USE_SDL            1
 #if LV_USE_SDL
 #  define LV_SDL_MOUSEWHEEL   1
-#  define LV_SDL_FULLSCREEN   0
+#  define LV_SDL_FULLSCREEN   1
 #  define LV_SDL_DIRECT_EXIT  1
+#endif
+
+/*******************
+ * DRAW BACKEND (disable ASM paths on Pi)
+ *******************/
+/* Ensure LVGL uses portable C fallback (no NEON/Helium ASM objects) */
+#ifndef LV_USE_DRAW_SW
+#define LV_USE_DRAW_SW 1
+#endif
+#if LV_USE_DRAW_SW
+#  ifndef LV_USE_NATIVE_HELIUM_ASM
+#    define LV_USE_NATIVE_HELIUM_ASM 0
+#  endif
+#  ifndef LV_USE_DRAW_SW_ASM
+#    define LV_USE_DRAW_SW_ASM LV_DRAW_SW_ASM_NONE
+#  endif
 #endif
 
 /*******************

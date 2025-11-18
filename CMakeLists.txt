@@ -42,12 +42,25 @@ target_compile_definitions(lvgl PRIVATE
   LV_ATTRIBUTE_EXTERN_DATA=
   LV_CONF_INCLUDE_SIMPLE
   LV_LVGL_H_INCLUDE_SIMPLE
+  # Force software renderer to avoid native ASM paths on Pi
+  LV_USE_DRAW_SW_ASM=LV_DRAW_SW_ASM_NONE
+  LV_USE_NATIVE_HELIUM_ASM=0
 )
 
 target_link_libraries(lvgl PRIVATE
   $<$<TARGET_EXISTS:SDL2::SDL2main>:SDL2::SDL2main>
   $<$<TARGET_EXISTS:SDL2::SDL2>:SDL2::SDL2>
 )
+
+# ---- Workaround: exclude LVGL assembly sources (.S) from build on Pi ----
+# LVGL's CMake globs *.S unconditionally. These optimized Helium/NEON sources
+# can trip the assembler on some distros. We exclude them so the portable C fallback is used.
+if (EXISTS "${lvgl_SOURCE_DIR}")
+  file(GLOB_RECURSE LVGL_ASM_SOURCES "${lvgl_SOURCE_DIR}/src/*.S")
+  if (LVGL_ASM_SOURCES)
+    set_source_files_properties(${LVGL_ASM_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
+  endif()
+endif()
 
 # ---- Your app ----
 add_executable(crib_guard_pi
