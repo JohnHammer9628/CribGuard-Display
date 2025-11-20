@@ -473,6 +473,7 @@ static void on_cam_play(lv_event_t* e);
 static void on_cam_pause(lv_event_t* e);
 static void on_cam_stop(lv_event_t* e);
 static void on_cam_mute_toggle(lv_event_t* e);
+static void on_shutdown(lv_event_t* e);
 
 static void cam_spinner_show(uint32_t auto_hide_ms);
 static void cam_spinner_hide();
@@ -513,6 +514,12 @@ static void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_t* btn_save = lv_btn_create(hdr_btns);
     style_button_tonal(btn_save);
     { lv_obj_t* lbl = lv_label_create(btn_save); lv_label_set_text(lbl, "Save"); lv_obj_center(lbl); }
+
+    // Shutdown button
+    lv_obj_t* btn_shutdown = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_shutdown);
+    { lv_obj_t* lbl = lv_label_create(btn_shutdown); lv_label_set_text(lbl, "Shutdown"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_shutdown, on_shutdown, LV_EVENT_CLICKED, nullptr);
 
     auto make_row = [&](const char* left, lv_obj_t** outRow){
         lv_obj_t* r = lv_obj_create(sheet);
@@ -564,9 +571,10 @@ static void build_settings_dialog(lv_obj_t* parent) {
     // Quiet Start Hour
     lv_obj_t* row_qstart=nullptr; make_row("Quiet Start Hour", &row_qstart);
     lv_obj_t* dd_start = lv_dropdown_create(row_qstart);
-    lv_obj_set_width(dd_start, 120);
+    lv_obj_set_width(dd_start, 160);
     lv_dropdown_set_options(dd_start,
-        "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23");
+        "12 AM\n1 AM\n2 AM\n3 AM\n4 AM\n5 AM\n6 AM\n7 AM\n8 AM\n9 AM\n10 AM\n11 AM\n"
+        "12 PM\n1 PM\n2 PM\n3 PM\n4 PM\n5 PM\n6 PM\n7 PM\n8 PM\n9 PM\n10 PM\n11 PM");
     lv_dropdown_set_selected(dd_start, g_quiet_start);
     lv_obj_set_style_bg_color(dd_start, lv_color_hex(0x2A2F36), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(dd_start, LV_OPA_40, LV_PART_MAIN);
@@ -575,9 +583,10 @@ static void build_settings_dialog(lv_obj_t* parent) {
     // Quiet End Hour
     lv_obj_t* row_qend=nullptr; make_row("Quiet End Hour", &row_qend);
     lv_obj_t* dd_end = lv_dropdown_create(row_qend);
-    lv_obj_set_width(dd_end, 120);
+    lv_obj_set_width(dd_end, 160);
     lv_dropdown_set_options(dd_end,
-        "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23");
+        "12 AM\n1 AM\n2 AM\n3 AM\n4 AM\n5 AM\n6 AM\n7 AM\n8 AM\n9 AM\n10 AM\n11 AM\n"
+        "12 PM\n1 PM\n2 PM\n3 PM\n4 PM\n5 PM\n6 PM\n7 PM\n8 PM\n9 PM\n10 PM\n11 PM");
     lv_dropdown_set_selected(dd_end, g_quiet_end);
     lv_obj_set_style_bg_color(dd_end, lv_color_hex(0x2A2F36), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(dd_end, LV_OPA_40, LV_PART_MAIN);
@@ -951,6 +960,11 @@ static void on_cam_mute_toggle(lv_event_t* e) {
     g_cam_muted = lv_obj_has_state(sw, LV_STATE_CHECKED);
     log_line(g_cam_muted ? "[UI] camera muted" : "[UI] camera unmuted");
     apply_camera_ui_state();
+}
+
+static void on_shutdown(lv_event_t* /*e*/) {
+    log_line("[UI] shutdown requested");
+    std::system("sudo /usr/local/bin/cribguard-shutdown.sh &");
 }
 
 // ---------- Spinner helpers ----------
