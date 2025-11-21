@@ -7,6 +7,7 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <csignal>
 
 extern "C" {
   #include "lvgl.h"
@@ -240,6 +241,13 @@ static bool   g_cam_muted = false;
 static bool   g_cam_playing = false;
 static bool   g_cam_show_spinner = false;
 static lv_timer_t* g_cam_spinner_timer = nullptr;
+
+// ---------- Signal handling ----------
+static void handle_shutdown_signal(int /*sig*/) {
+	log_line("[SIM] signal received, initiating graceful shutdown");
+	if (g_log) std::fflush(g_log);
+	g_quit = true;
+}
 
 // ---------- Helpers ----------
 // Forward declaration so it can be used in helpers below
@@ -1300,6 +1308,16 @@ int main() {
       std::snprintf(buf, sizeof(buf), "[SIM] SDL window created %dx%d", SCR_W, SCR_H);
       log_line(buf);
   }
+
+    // Install signal handlers so UI exits cleanly on gpio-shutdown (power button) or Ctrl+C
+    std::signal(SIGINT,  handle_shutdown_signal);
+    std::signal(SIGTERM, handle_shutdown_signal);
+#ifdef SIGHUP
+    std::signal(SIGHUP,  handle_shutdown_signal);
+#endif
+#ifdef SIGQUIT
+    std::signal(SIGQUIT, handle_shutdown_signal);
+#endif
 
     // Attach pointer input for touchscreen simulation (uses SDL pointer)
 #if HAVE_SDL_MOUSE
