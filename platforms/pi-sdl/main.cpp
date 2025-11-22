@@ -507,6 +507,40 @@ static void baby_pi_play_lullaby(const std::string& filename) {
     }
 }
 
+static bool baby_pi_rename_lullaby(const std::string& old_name, const std::string& new_name_with_ext) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/rename";
+    // Ensure .wav extension on destination
+    std::string dst = new_name_with_ext;
+    if (dst.size() < 4 || dst.substr(dst.size() - 4) != ".wav") {
+        dst += ".wav";
+    }
+    // Very basic sanitation client-side (server also sanitizes)
+    auto sanitize = [](std::string s) {
+        for (char& c : s) {
+            bool ok = (c >= '0' && c <= '9') ||
+                      (c >= 'A' && c <= 'Z') ||
+                      (c >= 'a' && c <= 'z') ||
+                      c == '_' || c == '-' || c == ' ' || c == '.';
+            if (!ok) c = '_';
+        }
+        return s;
+    };
+    std::string json = std::string("{\"old\":\"") + sanitize(old_name) + "\",\"new\":\"" + sanitize(dst) + "\"}";
+    std::string response;
+    log_line((std::string("[AUDIO] rename: ") + old_name + " -> " + dst).c_str());
+    if (http_post(url, json, response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+        // Heuristic: check for success true
+        if (response.find("\"success\": true") != std::string::npos ||
+            response.find("\"success\":true") != std::string::npos) {
+            return true;
+        }
+    } else {
+        log_line("[AUDIO] ERROR: failed to call rename");
+    }
+    return false;
+}
+
 static void baby_pi_stop_playback() {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/play/stop";
     std::string response;
@@ -665,6 +699,12 @@ static lv_obj_t* g_lullabies_modal = nullptr;
 static lv_obj_t* g_lullabies_sheet = nullptr;
 static lv_obj_t* g_lullabies_list = nullptr;
 static std::vector<std::string> g_lullabies_files;
+// Rename dialog state
+static lv_obj_t* g_rename_modal = nullptr;
+static lv_obj_t* g_rename_sheet = nullptr;
+static lv_obj_t* g_rename_text = nullptr;
+static lv_obj_t* g_rename_kbd = nullptr;
+static std::string g_rename_old_name;
 
 static bool   g_connected   = true;
 static bool   g_quiet_hours = false;
@@ -695,6 +735,8 @@ static void build_library_dialog(lv_obj_t* parent);
 static void close_library();
 static void build_lullabies_dialog(lv_obj_t* parent);
 static void close_lullabies();
+static void build_rename_dialog(const char* old_name);
+static void close_rename();
 static std::string format_hour12(int hour24) {
     int h = ((hour24 % 24) + 24) % 24;
     int display = h % 12;
@@ -822,6 +864,164 @@ static void close_library() {
     }
 }
 
+// ---------- Rename dialog ----------
+static void close_rename() {
+    if (g_rename_modal) {
+        lv_obj_del(g_rename_modal);
+        g_rename_modal = nullptr;
+        g_rename_sheet = nullptr;
+        g_rename_text = nullptr;
+        if (g_rename_kbd) { lv_obj_del(g_rename_kbd); g_rename_kbd = nullptr; }
+        log_line("[UI] rename closed");
+    }
+}
+
+static void build_rename_dialog(const char* old_name) {
+    if (g_rename_modal) return;
+    if (!old_name) return;
+    // Only allow renaming .wav files per requirement
+    std::string s = old_name;
+    if (!(s.size() >= 4 && s.substr(s.size() - 4) == ".wav")) {
+        log_line("[UI] rename only allowed for .wav files");
+        return;
+    }
+    g_rename_old_name = s;
+
+    g_rename_modal = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(g_rename_modal);
+    lv_obj_set_size(g_rename_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(g_rename_modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_rename_modal, LV_OPA_30, 0);
+    lv_obj_add_flag(g_rename_modal, LV_OBJ_FLAG_CLICKABLE);
+
+    g_rename_sheet = lv_obj_create(g_rename_modal);
+    lv_obj_set_size(g_rename_sheet, LV_PCT(92), LV_SIZE_CONTENT);
+    lv_obj_center(g_rename_sheet);
+    style_sheet(g_rename_sheet);
+
+    // header
+    lv_obj_t* hdr_btns = nullptr;
+    build_header(g_rename_sheet, "Rename Lullaby", &hdr_btns);
+
+    // Cancel
+    lv_obj_t* btn_cancel = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_cancel);
+    { lv_obj_t* lbl = lv_label_create(btn_cancel); lv_label_set_text(lbl, "Cancel"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_cancel, [](lv_event_t* /*e*/){ close_rename(); }, LV_EVENT_CLICKED, nullptr);
+
+    // Save
+    lv_obj_t* btn_save = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_save);
+    { lv_obj_t* lbl = lv_label_create(btn_save); lv_label_set_text(lbl, "Save"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_save, [](lv_event_t* /*e*/){
+#if HAVE_CURL
+        if (!g_rename_text) return;
+        const char* new_text = lv_textarea_get_text(g_rename_text);
+        if (!new_text || std::string(new_text).empty()) return;
+        std::string new_name = new_text;
+        // Append .wav if not present (server enforces too)
+        if (!(new_name.size() >= 4 && new_name.substr(new_name.size() - 4) == ".wav")) {
+            new_name += ".wav";
+        }
+        bool ok = baby_pi_rename_lullaby(g_rename_old_name, new_name);
+        // Refresh list regardless; best-effort
+        if (g_lullabies_list) {
+            if (baby_pi_list_lullabies(g_lullabies_files)) {
+                lv_obj_clean(g_lullabies_list);
+                for (const auto& name : g_lullabies_files) {
+                    lv_obj_t* b = lv_btn_create(g_lullabies_list);
+                    style_button_tonal(b);
+                    { lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, name.c_str()); lv_obj_center(l); }
+                    // click to play
+                    lv_obj_add_event_cb(b, [](lv_event_t* e){
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                        lv_obj_t* child = lv_obj_get_child(btn, 0);
+                        const char* fname = child ? lv_label_get_text(child) : nullptr;
+                        if (fname) baby_pi_play_lullaby(fname);
+                    }, LV_EVENT_CLICKED, nullptr);
+                    // long-press to rename
+                    lv_obj_add_event_cb(b, [](lv_event_t* e){
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                        lv_obj_t* child = lv_obj_get_child(btn, 0);
+                        const char* fname = child ? lv_label_get_text(child) : nullptr;
+                        if (fname) build_rename_dialog(fname);
+                    }, LV_EVENT_LONG_PRESSED, nullptr);
+                }
+            }
+        }
+        close_rename();
+#else
+        (void)g_rename_text;
+        close_rename();
+#endif
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // content
+    lv_obj_t* content = lv_obj_create(g_rename_sheet);
+    lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(content, 1);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(content, 1, 0);
+    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_radius(content, 8, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(content, theme::sp12, 0);
+    lv_obj_set_style_pad_row(content, theme::sp8, 0);
+
+    // Current name
+    {
+        lv_obj_t* lbl_cur = lv_label_create(content);
+        std::string cur = std::string("Current: ") + g_rename_old_name;
+        lv_label_set_text(lbl_cur, cur.c_str());
+        lv_obj_set_style_text_color(lbl_cur, theme::text_subtle(), 0);
+    }
+
+    // New name label
+    {
+        lv_obj_t* lbl_new = lv_label_create(content);
+        lv_label_set_text(lbl_new, "New name");
+        lv_obj_set_style_text_color(lbl_new, theme::text_subtle(), 0);
+    }
+
+    // Text area pre-filled with base name (without .wav)
+    g_rename_text = lv_textarea_create(content);
+    lv_obj_set_width(g_rename_text, LV_PCT(92));
+    // Style for visibility
+    lv_obj_set_style_bg_color(g_rename_text, theme::tonal_bg(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_rename_text, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_rename_text, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_rename_text, theme::tonal_border(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_rename_text, theme::text_main(), LV_PART_MAIN);
+    {
+        std::string base = g_rename_old_name;
+        if (base.size() >= 4 && base.substr(base.size() - 4) == ".wav") {
+            base = base.substr(0, base.size() - 4);
+        }
+        lv_textarea_set_text(g_rename_text, base.c_str());
+    }
+    lv_textarea_set_cursor_pos(g_rename_text, LV_TEXTAREA_CURSOR_LAST);
+    lv_textarea_set_placeholder_text(g_rename_text, "Enter new name");
+    lv_textarea_set_one_line(g_rename_text, true);
+    lv_textarea_set_password_mode(g_rename_text, false);
+
+    // On-screen keyboard (optional; helpful on touch)
+    g_rename_kbd = lv_keyboard_create(g_rename_modal);
+    lv_obj_set_width(g_rename_kbd, LV_PCT(92));
+    lv_obj_align(g_rename_kbd, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_keyboard_set_textarea(g_rename_kbd, g_rename_text);
+
+    // backdrop click to close
+    lv_obj_add_event_cb(g_rename_modal, [](lv_event_t* e){
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED) { close_rename(); }
+    }, LV_EVENT_CLICKED, nullptr);
+
+    log_line("[UI] rename opened");
+}
+
 // ---------- Lullabies dialog ----------
 static void build_lullabies_dialog(lv_obj_t* parent) {
     if (g_lullabies_modal) return;
@@ -878,6 +1078,12 @@ static void build_lullabies_dialog(lv_obj_t* parent) {
                     const char* fname = child ? lv_label_get_text(child) : nullptr;
                     if (fname) baby_pi_play_lullaby(fname);
                 }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(b, [](lv_event_t* e){
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                    lv_obj_t* child = lv_obj_get_child(btn, 0);
+                    const char* fname = child ? lv_label_get_text(child) : nullptr;
+                    if (fname) build_rename_dialog(fname);
+                }, LV_EVENT_LONG_PRESSED, nullptr);
             }
         }
 #endif
@@ -928,6 +1134,12 @@ static void build_lullabies_dialog(lv_obj_t* parent) {
                 const char* fname = child ? lv_label_get_text(child) : nullptr;
                 if (fname) baby_pi_play_lullaby(fname);
             }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(b, [](lv_event_t* e){
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* child = lv_obj_get_child(btn, 0);
+                const char* fname = child ? lv_label_get_text(child) : nullptr;
+                if (fname) build_rename_dialog(fname);
+            }, LV_EVENT_LONG_PRESSED, nullptr);
         }
     } else {
         lv_obj_t* lbl = lv_label_create(g_lullabies_list);

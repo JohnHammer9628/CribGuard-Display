@@ -264,6 +264,42 @@ def stop_playback():
         logger.error(f"Failed to stop playback: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/rename', methods=['POST'])
+def rename_lullaby():
+    """Rename an existing .wav file in the LULLABIES_DIR.
+       JSON body: { "old": "oldname.wav", "new": "newname.wav" }
+       Only .wav files are allowed to be renamed via this endpoint.
+    """
+    data = request.get_json() or {}
+    old_name = data.get('old')
+    new_name = data.get('new')
+    if not old_name or not new_name:
+        return jsonify({'success': False, 'error': 'old and new are required'}), 400
+    # Sanitize: base names only
+    old_base = os.path.basename(old_name)
+    new_base = os.path.basename(new_name)
+    # Force .wav extension on destination; require source .wav
+    if not old_base.lower().endswith('.wav'):
+        return jsonify({'success': False, 'error': 'only .wav files may be renamed'}), 400
+    if not new_base.lower().endswith('.wav'):
+        new_base = f"{new_base}.wav"
+    old_path = os.path.join(LULLABIES_DIR, old_base)
+    new_path = os.path.join(LULLABIES_DIR, new_base)
+    if not os.path.isfile(old_path):
+        return jsonify({'success': False, 'error': 'source file not found'}), 404
+    if os.path.abspath(os.path.dirname(old_path)) != os.path.abspath(LULLABIES_DIR) \
+       or os.path.abspath(os.path.dirname(new_path)) != os.path.abspath(LULLABIES_DIR):
+        return jsonify({'success': False, 'error': 'invalid path'}), 400
+    if os.path.exists(new_path):
+        return jsonify({'success': False, 'error': 'destination exists'}), 409
+    try:
+        logger.info(f"Renaming lullaby: {old_base} -> {new_base}")
+        os.rename(old_path, new_path)
+        return jsonify({'success': True, 'old': old_base, 'new': new_base})
+    except Exception as e:
+        logger.error(f"Failed to rename: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/config', methods=['POST'])
 def update_config():
     """Update configuration (parent IP/port)"""
