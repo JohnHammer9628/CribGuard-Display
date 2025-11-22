@@ -127,6 +127,8 @@ static void log_line(const char* msg) {
 static std::string g_baby_pi_ip = "10.0.0.153";
 static int g_baby_pi_port = 8000;
 static int g_camera_stream_port = 5000;
+static int g_audio_record_seconds = 30;
+static std::string g_audio_play_device = "default";
 
 static void load_config() {
     std::ifstream cfg("settings.cfg");
@@ -161,6 +163,13 @@ static void load_config() {
         } else if (key == "camera_stream_port") {
             g_camera_stream_port = std::atoi(val.c_str());
             log_line((std::string("[CFG] camera_stream_port = ") + val).c_str());
+        } else if (key == "audio_record_seconds") {
+            g_audio_record_seconds = std::atoi(val.c_str());
+            if (g_audio_record_seconds <= 0) g_audio_record_seconds = 30;
+            log_line((std::string("[CFG] audio_record_seconds = ") + std::to_string(g_audio_record_seconds)).c_str());
+        } else if (key == "audio_play_device") {
+            g_audio_play_device = val.empty() ? "default" : val;
+            log_line((std::string("[CFG] audio_play_device = ") + g_audio_play_device).c_str());
         }
     }
     cfg.close();
@@ -448,6 +457,67 @@ static void baby_pi_stop_camera() {
     }
 }
 
+static void baby_pi_record_audio(int seconds) {
+    if (seconds <= 0) seconds = g_audio_record_seconds;
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/record";
+    std::string json = "{\"seconds\":" + std::to_string(seconds) + "}";
+    std::string response;
+
+    log_line((std::string("[AUDIO] record request: ") + std::to_string(seconds) + "s").c_str());
+
+    if (http_post(url, json, response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+    } else {
+        log_line("[AUDIO] ERROR: failed to start recording on Baby Pi");
+    }
+}
+
+static bool baby_pi_list_lullabies(std::vector<std::string>& out_files) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/lullabies";
+    std::string response;
+    out_files.clear();
+    if (!http_get(url, response)) return false;
+    // very simple JSON scan: look for "name":"..."
+    size_t pos = 0;
+    while (true) {
+        pos = response.find("\"name\"", pos);
+        if (pos == std::string::npos) break;
+        size_t colon = response.find(':', pos);
+        if (colon == std::string::npos) break;
+        size_t q1 = response.find('"', colon + 1);
+        if (q1 == std::string::npos) break;
+        size_t q2 = response.find('"', q1 + 1);
+        if (q2 == std::string::npos) break;
+        std::string name = response.substr(q1 + 1, q2 - (q1 + 1));
+        if (!name.empty()) out_files.push_back(name);
+        pos = q2 + 1;
+    }
+    return true;
+}
+
+static void baby_pi_play_lullaby(const std::string& filename) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/play";
+    std::string json = std::string("{\"file\":\"") + filename + "\",\"device\":\"" + g_audio_play_device + "\"}";
+    std::string response;
+    log_line((std::string("[AUDIO] play: ") + filename).c_str());
+    if (http_post(url, json, response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+    } else {
+        log_line("[AUDIO] ERROR: failed to start playback");
+    }
+}
+
+static void baby_pi_stop_playback() {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/play/stop";
+    std::string response;
+    log_line("[AUDIO] stop playback");
+    if (http_post(url, "{}", response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+    } else {
+        log_line("[AUDIO] ERROR: failed to stop playback");
+    }
+}
+
 static bool baby_pi_check_status() {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/status";
     std::string response;
@@ -593,6 +663,8 @@ static lv_obj_t* g_library_modal = nullptr;
 static lv_obj_t* g_library_sheet = nullptr;
 static lv_obj_t* g_lullabies_modal = nullptr;
 static lv_obj_t* g_lullabies_sheet = nullptr;
+static lv_obj_t* g_lullabies_list = nullptr;
+static std::vector<std::string> g_lullabies_files;
 
 static bool   g_connected   = true;
 static bool   g_quiet_hours = false;
@@ -777,6 +849,50 @@ static void build_lullabies_dialog(lv_obj_t* parent) {
     { lv_obj_t* lbl = lv_label_create(btn_close2); lv_label_set_text(lbl, "Close"); lv_obj_center(lbl); }
     lv_obj_add_event_cb(btn_close2, [](lv_event_t* /*e*/){ close_lullabies(); }, LV_EVENT_CLICKED, nullptr);
 
+    // Record Audio button in Lullabies header
+    lv_obj_t* btn_rec = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_rec);
+    { lv_obj_t* lbl = lv_label_create(btn_rec); lv_label_set_text(lbl, "Record"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_rec, [](lv_event_t* /*e*/){
+#if HAVE_CURL
+        baby_pi_record_audio(g_audio_record_seconds);
+#endif
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Refresh list button
+    lv_obj_t* btn_ref = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_ref);
+    { lv_obj_t* lbl = lv_label_create(btn_ref); lv_label_set_text(lbl, "Refresh"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_ref, [](lv_event_t* /*e*/){
+#if HAVE_CURL
+        // rebuild list
+        if (baby_pi_list_lullabies(g_lullabies_files) && g_lullabies_list) {
+            lv_obj_clean(g_lullabies_list);
+            for (const auto& name : g_lullabies_files) {
+                lv_obj_t* b = lv_btn_create(g_lullabies_list);
+                style_button_tonal(b);
+                { lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, name.c_str()); lv_obj_center(l); }
+                lv_obj_add_event_cb(b, [](lv_event_t* e){
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                    lv_obj_t* child = lv_obj_get_child(btn, 0);
+                    const char* fname = child ? lv_label_get_text(child) : nullptr;
+                    if (fname) baby_pi_play_lullaby(fname);
+                }, LV_EVENT_CLICKED, nullptr);
+            }
+        }
+#endif
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Stop playback button
+    lv_obj_t* btn_stop_play = lv_btn_create(hdr_btns);
+    style_button_tonal(btn_stop_play);
+    { lv_obj_t* lbl = lv_label_create(btn_stop_play); lv_label_set_text(lbl, "Stop Play"); lv_obj_center(lbl); }
+    lv_obj_add_event_cb(btn_stop_play, [](lv_event_t* /*e*/){
+#if HAVE_CURL
+        baby_pi_stop_playback();
+#endif
+    }, LV_EVENT_CLICKED, nullptr);
+
     // content placeholder
     lv_obj_t* content = lv_obj_create(sheet);
     lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
@@ -787,14 +903,38 @@ static void build_lullabies_dialog(lv_obj_t* parent) {
     lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_scroll_dir(content, LV_DIR_VER);
-    {
-        lv_obj_t* lbl = lv_label_create(content);
-        lv_label_set_text(lbl, "Lullabies coming soon");
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0x9AA3AD), 0);
-        lv_obj_center(lbl);
+
+    // list container
+    g_lullabies_list = lv_obj_create(content);
+    lv_obj_set_size(g_lullabies_list, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(g_lullabies_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_bg_opa(g_lullabies_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(g_lullabies_list, 4, 0);
+    lv_obj_set_style_pad_row(g_lullabies_list, 6, 0);
+
+#if HAVE_CURL
+    // initial populate
+    if (baby_pi_list_lullabies(g_lullabies_files)) {
+        lv_obj_clean(g_lullabies_list);
+        for (const auto& name : g_lullabies_files) {
+            lv_obj_t* b = lv_btn_create(g_lullabies_list);
+            style_button_tonal(b);
+            { lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, name.c_str()); lv_obj_center(l); }
+            lv_obj_add_event_cb(b, [](lv_event_t* e){
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* child = lv_obj_get_child(btn, 0);
+                const char* fname = child ? lv_label_get_text(child) : nullptr;
+                if (fname) baby_pi_play_lullaby(fname);
+            }, LV_EVENT_CLICKED, nullptr);
+        }
+    } else {
+        lv_obj_t* lbl = lv_label_create(g_lullabies_list);
+        lv_label_set_text(lbl, "Unable to fetch lullabies.");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFF6B6B), 0);
     }
+#endif
 
     lv_obj_add_event_cb(g_lullabies_modal, [](lv_event_t* e){
         if (lv_event_get_code(e) == LV_EVENT_CLICKED) { close_lullabies(); }
