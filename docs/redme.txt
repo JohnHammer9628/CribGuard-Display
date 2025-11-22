@@ -1,0 +1,95 @@
+# Context for Cursor IDE Chatbot — MLX90640 streaming & remote control
+
+Summary
+- Purpose: provide Cursor with everything it needs from this codebase to enable remote control and streaming from a parent Raspberry Pi to the Pi that hosts this repository and MLX90640 sensor.
+- Important note: `mlx90640_opencv.cpp` is the program that runs and modifies the thermal image (it's the main OpenCV-based demo that captures frames, applies scaling/colormap, and displays/outputs the image). Cursor should treat this file/binary as the primary demo for image manipulation and streaming.
+
+Repository highlights (what Cursor needs to know)
+- Top-level build: `Makefile` — builds C++ binaries and examples.
+- Demo binaries/source to check:
+  - `mlx90640_opencv` (binary) and `mlx90640_opencv.cpp` — OpenCV demo that captures frames and modifies/visualizes the thermal image. This is the primary program for image processing.
+  - `my_mlx90640_minmax` (binary) and `my_mlx90640_minmax.cpp` — smaller CLI example useful for smoke tests.
+- Driver & API sources (useful for deep integration or building wrappers): `functions/` and `headers/` contain the MLX90640 access code (e.g. `MLX90640_API.cpp`, `MLX90640_LINUX_I2C_Driver.cpp`, `MLX90640_API.h`).
+- Examples: `examples/` holds multiple example programs and `examples/src/` contains their sources.
+- Python helpers: `python/` with `rgb-to-gif.py` and `python/library/` containing a SWIG wrapper for Python if Cursor prefers Python-based control.
+
+Assumptions
+- Target Pi is a Raspberry Pi or Linux device with I2C available (typical device node: `/dev/i2c-1`).
+- Cursor will have SSH access to the Pi or otherwise can run commands remotely.
+
+System prerequisites Cursor should verify
+- I2C enabled (via `raspi-config` or `/boot/config.txt` dtparam settings).
+- `/dev/i2c-1` (or appropriate device path) exists and is accessible.
+- User permissions: process must have read/write to the i2c device (add user to `i2c` group or run with sudo).
+- Build deps: g++, make, and optionally OpenCV (for `mlx90640_opencv`), plus Python + pip + swig if using Python wrapper.
+
+Build quick start
+1. Update apt and install likely deps (if missing):
+```bash
+sudo apt update
+sudo apt install build-essential libopencv-dev python3-opencv python3-dev swig
+```
+2. Build the C++ targets from repo root:
+```bash
+make
+```
+3. (Optional) Install Python wrapper:
+```bash
+cd python/library
+sudo python3 setup.py install
+```
+
+Smoke tests Cursor should run
+- Verify I2C device: `ls -l /dev/i2c-*`
+- Run a simple program to ensure the sensor responds:
+  - `./my_mlx90640_minmax` — expect text output or frame creation.
+  - Or run `./mlx90640_opencv` to see the OpenCV demo (this will modify and display the thermal image — great for visual verification).
+
+Recommended control approach for streaming
+- Run a small control server on the child Pi (the Pi with the MLX90640). Cursor should implement or deploy a tiny HTTP+WebSocket server that:
+  - Exposes REST endpoints: POST `/api/start`, POST `/api/stop`, POST `/api/set`, GET `/api/status`.
+  - Exposes a WebSocket endpoint `/ws` to stream frames as binary JPEGs (preferred) or base64 JSON.
+  - Why WebSocket + JPEG: low-latency, wide client support, bandwidth efficient compared to raw JSON arrays.
+
+Minimum JSON REST schema (examples)
+- POST /api/start
+  - Body: `{ "mode": "video"|"single", "format": "jpeg"|"raw", "rate": 8 }`
+- POST /api/stop — Body: `{}`
+- POST /api/set — Body: `{ "param": "emissivity"|"colormap"|..., "value": <value> }`
+- GET /api/status — returns current server/sensor state.
+
+WebSocket framing
+- Client → Server: control JSON messages (same or mirroring REST endpoints).
+- Server → Client: binary JPEG frames (send bytes directly). Optionally send small JSON metadata messages between frames with timestamp, width, height.
+
+Frame handling recommendations
+- MLX90640 raw array size: 32x24 cells. For network streaming, convert to a color-mapped image and scale (e.g. 320x240) then encode JPEG.
+- Default recommended streaming config: JPEG, 320x240 (or scaled), 4–15 FPS depending on network and CPU.
+
+How Cursor should integrate with this repo
+- Prefer using `mlx90640_opencv` for image capture & processing because it already captures frames and applies colormap/scaling — Cursor should either:
+  - Use the Python wrapper to capture frames and perform JPEG encoding, or
+  - Invoke `mlx90640_opencv` (or modify its source) to produce frames to stdout or a socket, or
+  - Modify/add a small wrapper that calls the MLX API directly and produces JPEG frames for WebSocket streaming.
+- If Cursor modifies code, note `mlx90640_opencv.cpp` is the primary place handling the thermal image pipeline (capture → map → display). Modifying it or reusing its pipeline yields the fastest path to a visual stream.
+
+Security & network notes
+- Use port 8000 (or any >1024) for the control server by default.
+- If the network is untrusted, run the server behind SSH tunnel or implement simple token-based auth for endpoints.
+
+Diagnostics Cursor should perform
+- Check `/dev/i2c-*` and kernel logs (`dmesg | grep i2c`) for errors.
+- Run `./my_mlx90640_minmax` as a smoke test; check output and exit code.
+- Run `./mlx90640_opencv` to validate visual output and ensure the thermal image pipeline is functioning.
+
+Concise copy-paste checklist for Cursor
+- Repo root: `mlx90640-library` (contains `Makefile`, `functions/`, `headers/`, `examples/`, `python/`).
+- Build: `make` (repo root). Python wrapper: `cd python/library && sudo python3 setup.py install`.
+- Sensor device: `/dev/i2c-1` — ensure I2C enabled and user has access.
+- Primary image code: `mlx90640_opencv.cpp` (this captures and modifies the thermal image).
+- Recommended control server: HTTP+WebSocket on port 8000 with REST endpoints (`/api/start`, `/api/stop`, `/api/status`) and `/ws` streaming binary JPEGs.
+
+If you want me to supply a ready-to-run `control_server.py` (aiohttp/uvicorn or Flask+SocketIO), a `systemd` unit, and an example parent-client script to connect and render frames, tell me and I will add them to the repo.
+
+---
+File created by automation to provide context to a remote assistant. Place this file next to the original `README.md` and hand it to the Cursor chatbot for immediate context.

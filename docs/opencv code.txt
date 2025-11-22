@@ -1,0 +1,97 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <algorithm>
+
+#include "MLX90640_API.h"
+#include "MLX90640_I2C_Driver.h"
+
+#include <opencv2/opencv.hpp>
+
+#define MLX_I2C_ADDR 0x33
+#define ROWS 24
+#define COLS 32
+#define PIXELS (ROWS*COLS)
+
+int main() {
+    int status;
+    uint16_t eeData[832];
+    paramsMLX90640 mlxParams;
+    uint16_t frameData[834];
+    float to[PIXELS];
+
+    // Init I2C (your driver takes no args)
+    MLX90640_I2CInit();
+
+    status = MLX90640_DumpEE(MLX_I2C_ADDR, eeData);
+    if (status != 0) { printf("DumpEE failed: %d\n", status); return 1; }
+
+    status = MLX90640_ExtractParameters(eeData, &mlxParams);
+    if (status != 0) { printf("ExtractParameters failed: %d\n", status); return 1; }
+
+    // Refresh rate:
+    // 0x03 ~4 Hz, 0x04 ~8 Hz. Try 0x03 first for stability.
+    MLX90640_SetRefreshRate(MLX_I2C_ADDR, 0x03);
+
+    cv::namedWindow("MLX90640 Heatmap", cv::WINDOW_AUTOSIZE);
+
+    while (1) {
+        status = MLX90640_GetFrameData(MLX_I2C_ADDR, frameData);
+        if (status < 0) continue; // skip bad frames
+
+        float ta  = MLX90640_GetTa(frameData, &mlxParams);
+        float emissivity = 0.95f;
+        float tr = ta - 8.0f;
+
+        MLX90640_CalculateTo(frameData, &mlxParams, emissivity, tr, to);
+
+        // Fixed range for stable colors
+        float tmin = 26.0f;
+        float tmax = 38.0f;
+
+        // ---- 1) Put temps into float Mat (24x32) ----
+        cv::Mat tempF(ROWS, COLS, CV_32F);
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++) {
+                tempF.at<float>(r, c) = to[r*COLS + c];
+            }
+        }
+
+        // ---- 2) Upscale temps with bilinear interpolation ----
+        const int UPSCALE = 20; // 10x -> 240x320
+        cv::Mat tempUpF;
+        cv::resize(tempF, tempUpF,
+                   cv::Size(COLS * UPSCALE, ROWS * UPSCALE),
+                   0, 0, cv::INTER_CUBIC);  // bilinear
+
+        // ---- 3) Clamp to range, convert to 8-bit ----
+        cv::Mat tempClamped;
+        cv::min(cv::max(tempUpF, tmin), tmax, tempClamped);
+
+        cv::Mat img8;
+        tempClamped.convertTo(
+            img8, CV_8U,
+            255.0f/(tmax - tmin),
+            -tmin * 255.0f/(tmax - tmin)
+        );
+
+        // ---- 4) Apply colormap ----
+        cv::Mat colored;
+        cv::applyColorMap(img8, colored, cv::COLORMAP_INFERNO);
+
+        // Overlay range + ambient text
+        char buf[200];
+        snprintf(buf, sizeof(buf), "Range %.1f-%.1fC  Ta %.1fC", tmin, tmax, ta);
+        cv::putText(colored, buf, cv::Point(10, 25),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255,255,255), 2);
+
+        cv::imshow("MLX90640 Heatmap", colored);
+
+        int key = cv::waitKey(1);
+        if (key == 27 || key == 'q') break;
+
+        usleep(250000); // ~4 Hz pacing for 0x03
+    }
+
+    return 0;
+}

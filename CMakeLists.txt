@@ -17,6 +17,28 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Ensure you've installed: vcpkg install sdl2:x64-windows
 find_package(SDL2 CONFIG REQUIRED)
 
+# ---- GStreamer (optional, for camera streaming) ----
+find_package(PkgConfig)
+if (PKG_CONFIG_FOUND)
+  pkg_check_modules(GSTREAMER gstreamer-1.0)
+  pkg_check_modules(GSTREAMER_BASE gstreamer-base-1.0)
+  if (GSTREAMER_FOUND)
+    message(STATUS "GStreamer found: ${GSTREAMER_VERSION}")
+  else()
+    message(WARNING "GStreamer not found - camera streaming will be disabled")
+  endif()
+else()
+  message(WARNING "pkg-config not found - skipping GStreamer detection")
+endif()
+
+# ---- libcurl (optional, for HTTP API calls) ----
+find_package(CURL)
+if (CURL_FOUND)
+  message(STATUS "libcurl found: ${CURL_VERSION_STRING}")
+else()
+  message(WARNING "libcurl not found - camera control API will be disabled")
+endif()
+
 # ---- Fetch LVGL ----
 include(FetchContent)
 FetchContent_Declare(
@@ -94,6 +116,21 @@ target_link_libraries(crib_guard_pi PRIVATE
   $<$<TARGET_EXISTS:SDL2::SDL2main>:SDL2::SDL2main>
   $<$<TARGET_EXISTS:SDL2::SDL2>:SDL2::SDL2>
 )
+
+# Link GStreamer if found
+if (GSTREAMER_FOUND)
+  target_include_directories(crib_guard_pi PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_BASE_INCLUDE_DIRS})
+  target_link_libraries(crib_guard_pi PRIVATE ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES})
+  target_link_directories(crib_guard_pi PRIVATE ${GSTREAMER_LIBRARY_DIRS} ${GSTREAMER_BASE_LIBRARY_DIRS})
+  message(STATUS "GStreamer support enabled")
+endif()
+
+# Link libcurl if found
+if (CURL_FOUND)
+  target_include_directories(crib_guard_pi PRIVATE ${CURL_INCLUDE_DIRS})
+  target_link_libraries(crib_guard_pi PRIVATE ${CURL_LIBRARIES})
+  message(STATUS "libcurl support enabled")
+endif()
 
 if (WIN32)
   target_link_libraries(crib_guard_pi PRIVATE winmm imm32 version)

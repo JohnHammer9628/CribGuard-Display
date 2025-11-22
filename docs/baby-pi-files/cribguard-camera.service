@@ -1,0 +1,15 @@
+[Unit]
+Description=CribGuard Camera Control Server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/mlx90640-library
+ExecStart=/home/pi/mlx90640-library/camera_control_server.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+

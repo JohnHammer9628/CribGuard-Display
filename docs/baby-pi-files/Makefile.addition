@@ -1,0 +1,8 @@
+# Add this to your Baby Pi mlx90640-library Makefile
+# This builds the streaming program that sends IR camera feed to Parent Pi
+
+mlx90640_streaming: mlx90640_streaming.cpp functions/MLX90640_API.o functions/MLX90640_LINUX_I2C_Driver.o
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) `pkg-config --cflags --libs opencv4`
+
+# Then run: make mlx90640_streaming
+
