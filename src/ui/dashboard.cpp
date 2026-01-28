@@ -20,6 +20,7 @@
 #include "ui/settings.h"
 
 #include <string>
+#include <cstring>
 
 namespace cg::ui {
 
@@ -62,11 +63,11 @@ static void on_btn_status(lv_event_t* e) {
     const char* role = (const char*)lv_event_get_user_data(e);
     if (!role) return;
 
-    if (std::string(role) == "calm") {
+    if (std::strcmp(role, "calm") == 0) {
         set_status_text("Calm", lv_color_hex(0x22AA22));
-    } else if (std::string(role) == "cry") {
+    } else if (std::strcmp(role, "cry") == 0) {
         set_status_text("Cry", lv_color_hex(0xCC2222));
-    } else if (std::string(role) == "motion") {
+    } else if (std::strcmp(role, "motion") == 0) {
         set_status_text("Motion", lv_color_hex(0xD08770));
     }
 }
@@ -109,22 +110,22 @@ struct VolCtrl {
     int stack_h{16};
 };
 
-static VolCtrl* g_vol = nullptr;
+static VolCtrl g_vol;
 
 static void vol_apply_visuals() {
-    if (!g_vol || !g_vol->stack || !g_vol->track || !g_vol->fill || !g_vol->knob) return;
+    if (!g_vol.stack || !g_vol.track || !g_vol.fill || !g_vol.knob) return;
     const int v = state::volume;
-    const int w = g_vol->track_w;
-    const int k = g_vol->knob_sz;
+    const int w = g_vol.track_w;
+    const int k = g_vol.knob_sz;
     const int usable = (w - k) > 0 ? (w - k) : 1;
     const int knob_x = (v * usable) / 100;
-    const int knob_y = (g_vol->stack_h - k) / 2;
-    const int track_y = (g_vol->stack_h - g_vol->track_h) / 2;
+    const int knob_y = (g_vol.stack_h - k) / 2;
+    const int track_y = (g_vol.stack_h - g_vol.track_h) / 2;
     const int fill_w = knob_x + (k / 2);
-    lv_obj_set_width(g_vol->fill, fill_w);
-    lv_obj_set_x(g_vol->knob, knob_x);
-    lv_obj_set_y(g_vol->knob, knob_y);
-    lv_obj_set_y(g_vol->track, track_y);
+    lv_obj_set_width(g_vol.fill, fill_w);
+    lv_obj_set_x(g_vol.knob, knob_x);
+    lv_obj_set_y(g_vol.knob, knob_y);
+    lv_obj_set_y(g_vol.track, track_y);
 }
 
 static void vol_set_from_point(lv_obj_t* track, const lv_point_t& p) {
@@ -135,7 +136,7 @@ static void vol_set_from_point(lv_obj_t* track, const lv_point_t& p) {
     if (rel < 0) rel = 0;
     if (rel > w) rel = w;
     // Map pointer position to knob *center* so ends feel natural.
-    const int k = g_vol ? g_vol->knob_sz : 16;
+    const int k = g_vol.knob_sz;
     const int usable = (w - k) > 0 ? (w - k) : 1;
     int rel2 = rel - (k / 2);
     if (rel2 < 0) rel2 = 0;
@@ -149,7 +150,7 @@ static void on_vol_track(lv_event_t* e) {
     const lv_event_code_t code = lv_event_get_code(e);
     if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) return;
     // Always map using the track's coordinates.
-    lv_obj_t* track = g_vol && g_vol->track ? g_vol->track : (lv_obj_t*)lv_event_get_target(e);
+    lv_obj_t* track = g_vol.track ? g_vol.track : (lv_obj_t*)lv_event_get_target(e);
     lv_indev_t* indev = lv_indev_get_act();
     if (!indev) return;
     lv_point_t p;
@@ -178,8 +179,8 @@ static void update_dashboard() {
     // Determine status color and apply to hero ring
     const char* st = state::lbl_status ? lv_label_get_text(state::lbl_status) : "Calm";
     lv_color_t ring = lv_color_hex(0x22AA22);
-    if (st && std::string(st) == "Cry")       ring = lv_color_hex(0xCC2222);
-    else if (st && std::string(st) == "Motion") ring = lv_color_hex(0xD08770);
+    if (st && std::strcmp(st, "Cry") == 0)          ring = lv_color_hex(0xCC2222);
+    else if (st && std::strcmp(st, "Motion") == 0)  ring = lv_color_hex(0xD08770);
     if (state::dash_ring) {
         lv_obj_set_style_bg_opa(state::dash_ring, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(state::dash_ring, 10, 0);
@@ -383,7 +384,8 @@ void build_main_screen() {
     lv_obj_set_style_pad_all(stats, 0, 0);
     lv_obj_set_style_pad_column(stats, 12, 0);
     lv_obj_set_flex_flow(stats, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(stats, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // Distribute the three tiles across the full row so they read visually centered.
+    lv_obj_set_flex_align(stats, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     auto make_tile = [&](const char* title, lv_obj_t** outVal){
         lv_obj_t* tile = lv_obj_create(stats);
@@ -401,10 +403,16 @@ void build_main_screen() {
         lv_obj_t* t = lv_label_create(tile);
         lv_label_set_text(t, title);
         lv_obj_set_style_text_color(t, lv_color_hex(0x9AA3AD), 0);
+        // Center label text within the tile.
+        lv_obj_set_width(t, LV_PCT(100));
+        lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
 
         lv_obj_t* v = lv_label_create(tile);
         lv_obj_set_style_text_color(v, lv_color_hex(0xEDEFF2), 0);
         lv_label_set_text(v, "--");
+        // Center value text within the tile.
+        lv_obj_set_width(v, LV_PCT(100));
+        lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
         if (outVal) *outVal = v;
         return tile;
     };
@@ -434,13 +442,7 @@ void build_main_screen() {
     auto make_btn = [&](const char* txt, const char* role) {
         lv_obj_t* b = lv_btn_create(row1);
         lv_obj_set_size(b, 160, 56);
-        lv_obj_set_style_radius(b, 8, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0x2A2F36), 0);
-        lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
-        lv_obj_set_style_border_width(b, 1, 0);
-        lv_obj_set_style_border_color(b, lv_color_hex(0x3A4048), 0);
-        lv_obj_set_style_pad_hor(b, 12, 0);
-        lv_obj_set_style_pad_ver(b, 8, 0);
+        style_button_tonal_ex(b, 8, theme::sp12, theme::sp8);
         set_centered_button_label(b, txt);
         lv_obj_add_event_cb(b, on_btn_status, LV_EVENT_CLICKED, (void*)role);
         return b;
@@ -473,13 +475,7 @@ void build_main_screen() {
     auto make_ctrl_btn = [&](const char* txt, lv_event_cb_t cb) {
         lv_obj_t* b = lv_btn_create(row2);
         lv_obj_set_size(b, 140, 56);
-        lv_obj_set_style_radius(b, 8, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0x2A2F36), 0);
-        lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
-        lv_obj_set_style_border_width(b, 1, 0);
-        lv_obj_set_style_border_color(b, lv_color_hex(0x3A4048), 0);
-        lv_obj_set_style_pad_hor(b, 12, 0);
-        lv_obj_set_style_pad_ver(b, 8, 0);
+        style_button_tonal_ex(b, 8, theme::sp12, theme::sp8);
         set_centered_button_label(b, txt);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
         return b;
@@ -516,44 +512,50 @@ void build_main_screen() {
     lv_obj_set_style_text_color(vol_icon, theme::text_subtle(), 0);
 
     // Custom volume control (track + fill + knob). Avoids LVGL slider knob clipping entirely.
-    g_vol = new VolCtrl();
-    g_vol->track_w = 360;
-    g_vol->track_h = 10;
-    g_vol->knob_sz = 16;
-    g_vol->stack_h = 16;
+    g_vol = VolCtrl{};
+    g_vol.track_w = 360;
+    g_vol.track_h = 10;
+    g_vol.knob_sz = 16;
+    g_vol.stack_h = 16;
 
     // Stack container so the knob can be larger than the track without being clipped.
     lv_obj_t* stack = lv_obj_create(vol_grp);
-    g_vol->stack = stack;
+    g_vol.stack = stack;
     lv_obj_remove_style_all(stack);
     lv_obj_clear_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(stack, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(stack, g_vol->track_w, g_vol->stack_h);
+    lv_obj_set_size(stack, g_vol.track_w, g_vol.stack_h);
     lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(stack, 0, 0);
     lv_obj_set_style_pad_all(stack, 0, 0);
     lv_obj_add_flag(stack, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSING, nullptr);
+    // If the screen is rebuilt/destroyed, prevent stale pointers from being used.
+    lv_obj_add_event_cb(stack, [](lv_event_t* e){
+        if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+            g_vol = VolCtrl{};
+        }
+    }, LV_EVENT_DELETE, nullptr);
 
     lv_obj_t* track = lv_obj_create(stack);
-    g_vol->track = track;
+    g_vol.track = track;
     lv_obj_remove_style_all(track);
     lv_obj_clear_flag(track, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(track, g_vol->track_w, g_vol->track_h);
+    lv_obj_set_size(track, g_vol.track_w, g_vol.track_h);
     lv_obj_set_style_bg_color(track, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_bg_opa(track, LV_OPA_40, 0);
     lv_obj_set_style_radius(track, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(track, 0, 0);
-    lv_obj_set_pos(track, 0, (g_vol->stack_h - g_vol->track_h) / 2);
+    lv_obj_set_pos(track, 0, (g_vol.stack_h - g_vol.track_h) / 2);
 
     lv_obj_t* fill = lv_obj_create(track);
-    g_vol->fill = fill;
+    g_vol.fill = fill;
     lv_obj_remove_style_all(fill);
     lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(fill, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_height(fill, g_vol->track_h);
+    lv_obj_set_height(fill, g_vol.track_h);
     lv_obj_set_width(fill, 0);
     lv_obj_set_style_bg_color(fill, lv_color_hex(0x7FB3FF), 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
@@ -562,11 +564,11 @@ void build_main_screen() {
     lv_obj_set_pos(fill, 0, 0);
 
     lv_obj_t* knob = lv_obj_create(stack);
-    g_vol->knob = knob;
+    g_vol.knob = knob;
     lv_obj_remove_style_all(knob);
     lv_obj_clear_flag(knob, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(knob, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(knob, g_vol->knob_sz, g_vol->knob_sz);
+    lv_obj_set_size(knob, g_vol.knob_sz, g_vol.knob_sz);
     lv_obj_set_style_bg_color(knob, lv_color_hex(0xEDEFF2), 0);
     lv_obj_set_style_bg_opa(knob, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(knob, LV_RADIUS_CIRCLE, 0);
@@ -580,9 +582,7 @@ void build_main_screen() {
     // Initial position
     vol_apply_visuals();
 
-    log_line("[SIM] bottom bar volume style v11 (custom track/knob stack)");
-
-    log_line("[SIM] UI built");
+    log_line("[UI] UI built");
 }
 
 } // namespace cg::ui

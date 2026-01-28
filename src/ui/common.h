@@ -41,6 +41,7 @@ namespace theme {
 }
 
 void style_button_tonal(lv_obj_t* btn);
+void style_button_tonal_ex(lv_obj_t* btn, int radius, int pad_h, int pad_v);
 void style_button_pill(lv_obj_t* btn);
 void style_sheet(lv_obj_t* sheet);
 

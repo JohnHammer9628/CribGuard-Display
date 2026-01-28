@@ -289,35 +289,17 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_flex_align(row_ctrls, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* btn_play = lv_btn_create(row_ctrls);
-    lv_obj_set_style_radius(btn_play, 6, 0);
-    lv_obj_set_style_bg_color(btn_play, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_play, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_play, 1, 0);
-    lv_obj_set_style_border_color(btn_play, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_play, 12, 0);
-    lv_obj_set_style_pad_ver(btn_play, 8, 0);
+    style_button_tonal_ex(btn_play, 6, theme::sp12, theme::sp8);
     set_centered_button_label(btn_play, "Play");
     lv_obj_add_event_cb(btn_play, on_cam_play, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_pause = lv_btn_create(row_ctrls);
-    lv_obj_set_style_radius(btn_pause, 6, 0);
-    lv_obj_set_style_bg_color(btn_pause, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_pause, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_pause, 1, 0);
-    lv_obj_set_style_border_color(btn_pause, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_pause, 12, 0);
-    lv_obj_set_style_pad_ver(btn_pause, 8, 0);
+    style_button_tonal_ex(btn_pause, 6, theme::sp12, theme::sp8);
     set_centered_button_label(btn_pause, "Pause");
     lv_obj_add_event_cb(btn_pause, on_cam_pause, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_stop = lv_btn_create(row_ctrls);
-    lv_obj_set_style_radius(btn_stop, 6, 0);
-    lv_obj_set_style_bg_color(btn_stop, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_bg_opa(btn_stop, LV_OPA_40, 0);
-    lv_obj_set_style_border_width(btn_stop, 1, 0);
-    lv_obj_set_style_border_color(btn_stop, lv_color_hex(0x3A4048), 0);
-    lv_obj_set_style_pad_hor(btn_stop, 12, 0);
-    lv_obj_set_style_pad_ver(btn_stop, 8, 0);
+    style_button_tonal_ex(btn_stop, 6, theme::sp12, theme::sp8);
     set_centered_button_label(btn_stop, "Stop");
     lv_obj_add_event_cb(btn_stop, on_cam_stop, LV_EVENT_CLICKED, nullptr);
 

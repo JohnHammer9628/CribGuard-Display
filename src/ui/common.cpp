@@ -35,16 +35,21 @@ namespace theme {
     const int radius_pill = 999;
 } // namespace theme
 
-// Apply the standard tonal button style used across the UI.
-void style_button_tonal(lv_obj_t* btn) {
-    lv_obj_set_style_radius(btn, theme::radius_sm, 0);
+// Apply the standard tonal button style used across the UI, with overridable sizing.
+void style_button_tonal_ex(lv_obj_t* btn, int radius, int pad_h, int pad_v) {
+    lv_obj_set_style_radius(btn, radius, 0);
     lv_obj_set_style_bg_color(btn, theme::tonal_bg(), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
     lv_obj_set_style_border_width(btn, 1, 0);
     lv_obj_set_style_border_color(btn, theme::tonal_border(), 0);
-    lv_obj_set_style_pad_hor(btn, theme::sp12, 0);
-    lv_obj_set_style_pad_ver(btn, theme::sp8, 0);
+    lv_obj_set_style_pad_hor(btn, pad_h, 0);
+    lv_obj_set_style_pad_ver(btn, pad_v, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_50, LV_STATE_PRESSED);
+}
+
+// Apply the standard tonal button style used across the UI.
+void style_button_tonal(lv_obj_t* btn) {
+    style_button_tonal_ex(btn, theme::radius_sm, theme::sp12, theme::sp8);
 }
 
 // Apply the standard "pill" button style used for top-bar quick actions.
