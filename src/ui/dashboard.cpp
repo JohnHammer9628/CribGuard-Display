@@ -86,12 +86,75 @@ static void on_btn_stop(lv_event_t* /*e*/) {
     set_status_text("Stopped", lv_color_hex(0x444444));
 }
 
-// Handler for the volume slider (updates shared UI state and refreshes labels/tiles).
-static void on_volume_slider(lv_event_t* e) {
-    lv_obj_t* sld = (lv_obj_t*)lv_event_get_target(e);
-    state::volume = lv_slider_get_value(sld);
+static void vol_apply_visuals();
+
+static void set_volume_value(int v) {
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    if (state::volume == v) return;
+    state::volume = v;
     update_top_label();
+    vol_apply_visuals(); // keep bottom volume control in sync (even if volume changes elsewhere)
     log_line("[UI] volume changed");
+}
+
+struct VolCtrl {
+    lv_obj_t* stack{};
+    lv_obj_t* track{};
+    lv_obj_t* fill{};
+    lv_obj_t* knob{};
+    int track_w{360};
+    int track_h{10};
+    int knob_sz{16};
+    int stack_h{16};
+};
+
+static VolCtrl* g_vol = nullptr;
+
+static void vol_apply_visuals() {
+    if (!g_vol || !g_vol->stack || !g_vol->track || !g_vol->fill || !g_vol->knob) return;
+    const int v = state::volume;
+    const int w = g_vol->track_w;
+    const int k = g_vol->knob_sz;
+    const int usable = (w - k) > 0 ? (w - k) : 1;
+    const int knob_x = (v * usable) / 100;
+    const int knob_y = (g_vol->stack_h - k) / 2;
+    const int track_y = (g_vol->stack_h - g_vol->track_h) / 2;
+    const int fill_w = knob_x + (k / 2);
+    lv_obj_set_width(g_vol->fill, fill_w);
+    lv_obj_set_x(g_vol->knob, knob_x);
+    lv_obj_set_y(g_vol->knob, knob_y);
+    lv_obj_set_y(g_vol->track, track_y);
+}
+
+static void vol_set_from_point(lv_obj_t* track, const lv_point_t& p) {
+    lv_area_t a;
+    lv_obj_get_coords(track, &a);
+    const int w = lv_area_get_width(&a);
+    int rel = p.x - a.x1;
+    if (rel < 0) rel = 0;
+    if (rel > w) rel = w;
+    // Map pointer position to knob *center* so ends feel natural.
+    const int k = g_vol ? g_vol->knob_sz : 16;
+    const int usable = (w - k) > 0 ? (w - k) : 1;
+    int rel2 = rel - (k / 2);
+    if (rel2 < 0) rel2 = 0;
+    if (rel2 > usable) rel2 = usable;
+    int v = (rel2 * 100) / usable;
+    set_volume_value(v);
+    vol_apply_visuals();
+}
+
+static void on_vol_track(lv_event_t* e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) return;
+    // Always map using the track's coordinates.
+    lv_obj_t* track = g_vol && g_vol->track ? g_vol->track : (lv_obj_t*)lv_event_get_target(e);
+    lv_indev_t* indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    vol_set_from_point(track, p);
 }
 
 // Toggle quiet-hours state from the top bar pill.
@@ -182,10 +245,13 @@ static void apply_top_buttons_state() {
 void build_main_screen() {
     // Root screen (no scroll)
     lv_obj_t* screen = lv_obj_create(nullptr);
+    // Ensure no default padding/margins affect bottom-aligned bars.
+    lv_obj_remove_style_all(screen);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x0E1116), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(screen, 0, 0);
     lv_screen_load(screen);
 
     // Top bar (fixed)
@@ -387,7 +453,8 @@ void build_main_screen() {
     // Media controls + volume slider row (simulator-only convenience).
     lv_obj_t* row2 = lv_obj_create(screen);
     lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_align(row2, LV_ALIGN_BOTTOM_MID, 0, -24);
+    // Keep this bar flush to the bottom edge of the window.
+    lv_obj_align(row2, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(row2, lv_color_hex(0x16191D), 0);
     lv_obj_set_style_bg_opa(row2, LV_OPA_COVER, 0);
     lv_obj_clear_flag(row2, LV_OBJ_FLAG_SCROLLABLE);
@@ -395,9 +462,12 @@ void build_main_screen() {
     lv_obj_set_style_pad_all(row2, 12, 0);
     lv_obj_set_style_border_width(row2, 1, 0);
     lv_obj_set_style_border_color(row2, lv_color_hex(0x2A2F36), 0);
-    lv_obj_set_style_radius(row2, 8, 0);
+    // Square corners so the bar sits flush to the bottom edge (no visible "gap").
+    lv_obj_set_style_radius(row2, 0, 0);
     lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // Keep controls left-aligned and let the volume slider expand to the right.
+    // This prevents the slider from looking "floated" and keeps spacing consistent.
+    lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row2, 14, 0);
 
     auto make_ctrl_btn = [&](const char* txt, lv_event_cb_t cb) {
@@ -419,18 +489,98 @@ void build_main_screen() {
     make_ctrl_btn("Pause", on_btn_pause);
     make_ctrl_btn("Stop",  on_btn_stop);
 
-    lv_obj_t* slider = lv_slider_create(row2);
-    lv_obj_set_size(slider, 360, 10);
-    lv_slider_set_range(slider, 0, 100);
-    lv_slider_set_value(slider, state::volume, LV_ANIM_OFF);
-    lv_obj_add_event_cb(slider, on_volume_slider, LV_EVENT_VALUE_CHANGED, nullptr);
-    // slider styling
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x2A2F36), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x7FB3FF), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0xEDEFF2), LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
+    // Flexible spacer so the slider hugs the right side (removes awkward empty space).
+    {
+        lv_obj_t* spacer = lv_obj_create(row2);
+        lv_obj_set_size(spacer, 1, 1);
+        lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(spacer, 0, 0);
+        lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_grow(spacer, 1);
+    }
+
+    // Volume control (professional: icon + slider; value is shown in the tile above)
+    lv_obj_t* vol_grp = lv_obj_create(row2);
+    lv_obj_clear_flag(vol_grp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(vol_grp, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(vol_grp, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(vol_grp, 0, 0);
+    lv_obj_set_style_pad_all(vol_grp, 0, 0);
+    lv_obj_set_style_pad_column(vol_grp, 6, 0);
+    lv_obj_set_flex_flow(vol_grp, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(vol_grp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_size(vol_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+    lv_obj_t* vol_icon = lv_label_create(vol_grp);
+    lv_label_set_text(vol_icon, LV_SYMBOL_VOLUME_MAX);
+    lv_obj_set_style_text_color(vol_icon, theme::text_subtle(), 0);
+
+    // Custom volume control (track + fill + knob). Avoids LVGL slider knob clipping entirely.
+    g_vol = new VolCtrl();
+    g_vol->track_w = 360;
+    g_vol->track_h = 10;
+    g_vol->knob_sz = 16;
+    g_vol->stack_h = 16;
+
+    // Stack container so the knob can be larger than the track without being clipped.
+    lv_obj_t* stack = lv_obj_create(vol_grp);
+    g_vol->stack = stack;
+    lv_obj_remove_style_all(stack);
+    lv_obj_clear_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(stack, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(stack, g_vol->track_w, g_vol->stack_h);
+    lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(stack, 0, 0);
+    lv_obj_set_style_pad_all(stack, 0, 0);
+    lv_obj_add_flag(stack, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSING, nullptr);
+
+    lv_obj_t* track = lv_obj_create(stack);
+    g_vol->track = track;
+    lv_obj_remove_style_all(track);
+    lv_obj_clear_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(track, g_vol->track_w, g_vol->track_h);
+    lv_obj_set_style_bg_color(track, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_bg_opa(track, LV_OPA_40, 0);
+    lv_obj_set_style_radius(track, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(track, 0, 0);
+    lv_obj_set_pos(track, 0, (g_vol->stack_h - g_vol->track_h) / 2);
+
+    lv_obj_t* fill = lv_obj_create(track);
+    g_vol->fill = fill;
+    lv_obj_remove_style_all(fill);
+    lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(fill, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_height(fill, g_vol->track_h);
+    lv_obj_set_width(fill, 0);
+    lv_obj_set_style_bg_color(fill, lv_color_hex(0x7FB3FF), 0);
+    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(fill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(fill, 0, 0);
+    lv_obj_set_pos(fill, 0, 0);
+
+    lv_obj_t* knob = lv_obj_create(stack);
+    g_vol->knob = knob;
+    lv_obj_remove_style_all(knob);
+    lv_obj_clear_flag(knob, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(knob, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(knob, g_vol->knob_sz, g_vol->knob_sz);
+    lv_obj_set_style_bg_color(knob, lv_color_hex(0xEDEFF2), 0);
+    lv_obj_set_style_bg_opa(knob, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(knob, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(knob, 0, 0);
+    lv_obj_set_style_outline_width(knob, 0, 0);
+    lv_obj_add_flag(knob, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(knob, on_vol_track, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(knob, on_vol_track, LV_EVENT_PRESSING, nullptr);
+    lv_obj_move_foreground(knob);
+
+    // Initial position
+    vol_apply_visuals();
+
+    log_line("[SIM] bottom bar volume style v11 (custom track/knob stack)");
 
     log_line("[SIM] UI built");
 }
