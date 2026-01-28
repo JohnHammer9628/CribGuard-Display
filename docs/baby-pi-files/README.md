@@ -17,6 +17,10 @@ Copy these files to `~/mlx90640-library/` on your Baby Pi:
 - `mlx90640_streaming.cpp`
 - `camera_control_server.py`
 
+Important:
+- The canonical server implementation lives in this repo at `baby-pi/camera_control_server.py`.
+- This `docs/baby-pi-files/` copy is maintained as a reference for setup instructions.
+
 ```bash
 # On your development machine
 scp mlx90640_streaming.cpp pi@10.0.0.153:~/mlx90640-library/

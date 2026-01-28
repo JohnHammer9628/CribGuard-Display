@@ -87,6 +87,18 @@ endif()
 # ---- Your app ----
 add_executable(crib_guard_pi
   platforms/pi-sdl/main.cpp
+  src/logging.cpp
+  src/config.cpp
+  src/baby_pi_api.cpp
+  src/camera_rx_gst.cpp
+  src/ui_app.cpp
+  src/ui/common.cpp
+  src/ui/state.cpp
+  src/ui/dashboard.cpp
+  src/ui/library.cpp
+  src/ui/lullabies.cpp
+  src/ui/settings.cpp
+  src/ui/camera.cpp
 )
 
 # Include paths you commonly use

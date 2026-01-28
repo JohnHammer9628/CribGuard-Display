@@ -44,7 +44,7 @@
 #define LV_USE_SDL            1
 #if LV_USE_SDL
 #  define LV_SDL_MOUSEWHEEL   1
-#  define LV_SDL_FULLSCREEN   1
+#  define LV_SDL_FULLSCREEN   0
 #  define LV_SDL_DIRECT_EXIT  1
 #endif
 
