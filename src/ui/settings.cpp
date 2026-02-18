@@ -59,17 +59,17 @@ void build_settings_dialog(lv_obj_t* parent) {
 
     lv_obj_t* btn_cancel = lv_btn_create(hdr_btns);
     style_button_tonal(btn_cancel);
-    set_centered_button_label(btn_cancel, "Cancel");
+    set_centered_button_label(btn_cancel, LV_SYMBOL_CLOSE " Cancel");
     lv_obj_add_event_cb(btn_cancel, [](lv_event_t* /*e*/){ close_settings(); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_save = lv_btn_create(hdr_btns);
     style_button_tonal(btn_save);
-    set_centered_button_label(btn_save, "Save");
+    set_centered_button_label(btn_save, LV_SYMBOL_SAVE " Save");
 
     // Shutdown button
     lv_obj_t* btn_shutdown = lv_btn_create(hdr_btns);
     style_button_tonal(btn_shutdown);
-    set_centered_button_label(btn_shutdown, "Shutdown");
+    set_centered_button_label(btn_shutdown, LV_SYMBOL_POWER " Shutdown");
     lv_obj_add_event_cb(btn_shutdown, on_shutdown, LV_EVENT_CLICKED, nullptr);
 
     auto make_row = [&](const char* left, lv_obj_t** outRow){

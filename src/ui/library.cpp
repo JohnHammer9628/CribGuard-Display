@@ -44,7 +44,7 @@ void build_library_dialog(lv_obj_t* parent) {
 
     lv_obj_t* btn_close = lv_btn_create(hdr_btns);
     style_button_tonal(btn_close);
-    set_centered_button_label(btn_close, "Close");
+    set_centered_button_label(btn_close, LV_SYMBOL_CLOSE " Close");
     lv_obj_add_event_cb(btn_close, [](lv_event_t* /*e*/){ close_library(); }, LV_EVENT_CLICKED, nullptr);
 
     // content placeholder

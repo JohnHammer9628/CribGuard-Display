@@ -22,7 +22,8 @@ find_package(PkgConfig)
 if (PKG_CONFIG_FOUND)
   pkg_check_modules(GSTREAMER gstreamer-1.0)
   pkg_check_modules(GSTREAMER_BASE gstreamer-base-1.0)
-  if (GSTREAMER_FOUND)
+  pkg_check_modules(GSTREAMER_APP gstreamer-app-1.0)
+  if (GSTREAMER_FOUND AND GSTREAMER_BASE_FOUND AND GSTREAMER_APP_FOUND)
     message(STATUS "GStreamer found: ${GSTREAMER_VERSION}")
   else()
     message(WARNING "GStreamer not found - camera streaming will be disabled")
@@ -52,8 +53,26 @@ set(LV_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/config/lv_conf.h" CACHE STRING "LV
 # Also make includes simple inside LVGL build
 set(LV_CONF_INCLUDE_SIMPLE ON CACHE BOOL "" FORCE)
 set(LV_LVGL_H_INCLUDE_SIMPLE ON CACHE BOOL "" FORCE)
+
+# Fetch LVGL so we can exclude ASM sources before configure.
+FetchContent_GetProperties(lvgl)
+if (NOT lvgl_POPULATED)
+  FetchContent_Populate(lvgl)
+endif()
+
+# ---- Workaround: exclude LVGL assembly sources (.S) from build on Pi/Windows ----
+# LVGL's CMake globs *.S unconditionally. These optimized Helium/NEON sources
+# can trip the assembler on some distros/toolchains. We exclude them so the
+# portable C fallback is used.
+if (EXISTS "${lvgl_SOURCE_DIR}")
+  file(GLOB_RECURSE LVGL_ASM_SOURCES "${lvgl_SOURCE_DIR}/src/*.S")
+  if (LVGL_ASM_SOURCES)
+    set_source_files_properties(${LVGL_ASM_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
+  endif()
+endif()
+
 # Build LVGL now
-FetchContent_MakeAvailable(lvgl)
+add_subdirectory(${lvgl_SOURCE_DIR} ${lvgl_BINARY_DIR})
 
 # ---- Patch LVGL build flags (important on MSVC) ----
 # - Enable SDL backend inside LVGL build
@@ -73,16 +92,6 @@ target_link_libraries(lvgl PRIVATE
   $<$<TARGET_EXISTS:SDL2::SDL2main>:SDL2::SDL2main>
   $<$<TARGET_EXISTS:SDL2::SDL2>:SDL2::SDL2>
 )
-
-# ---- Workaround: exclude LVGL assembly sources (.S) from build on Pi ----
-# LVGL's CMake globs *.S unconditionally. These optimized Helium/NEON sources
-# can trip the assembler on some distros. We exclude them so the portable C fallback is used.
-if (EXISTS "${lvgl_SOURCE_DIR}")
-  file(GLOB_RECURSE LVGL_ASM_SOURCES "${lvgl_SOURCE_DIR}/src/*.S")
-  if (LVGL_ASM_SOURCES)
-    set_source_files_properties(${LVGL_ASM_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
-  endif()
-endif()
 
 # ---- Your app ----
 add_executable(crib_guard_pi
@@ -130,10 +139,22 @@ target_link_libraries(crib_guard_pi PRIVATE
 )
 
 # Link GStreamer if found
-if (GSTREAMER_FOUND)
-  target_include_directories(crib_guard_pi PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_BASE_INCLUDE_DIRS})
-  target_link_libraries(crib_guard_pi PRIVATE ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES})
-  target_link_directories(crib_guard_pi PRIVATE ${GSTREAMER_LIBRARY_DIRS} ${GSTREAMER_BASE_LIBRARY_DIRS})
+if (GSTREAMER_FOUND AND GSTREAMER_BASE_FOUND AND GSTREAMER_APP_FOUND)
+  target_include_directories(crib_guard_pi PRIVATE
+    ${GSTREAMER_INCLUDE_DIRS}
+    ${GSTREAMER_BASE_INCLUDE_DIRS}
+    ${GSTREAMER_APP_INCLUDE_DIRS}
+  )
+  target_link_libraries(crib_guard_pi PRIVATE
+    ${GSTREAMER_LIBRARIES}
+    ${GSTREAMER_BASE_LIBRARIES}
+    ${GSTREAMER_APP_LIBRARIES}
+  )
+  target_link_directories(crib_guard_pi PRIVATE
+    ${GSTREAMER_LIBRARY_DIRS}
+    ${GSTREAMER_BASE_LIBRARY_DIRS}
+    ${GSTREAMER_APP_LIBRARY_DIRS}
+  )
   message(STATUS "GStreamer support enabled")
 endif()
 

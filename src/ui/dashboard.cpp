@@ -19,13 +19,20 @@
 #include "ui/lullabies.h"
 #include "ui/settings.h"
 
+#include "baby_pi_api.h"
 #include <string>
 #include <cstring>
+#include <atomic>
+#include <cstdint>
+#include <thread>
 
 namespace cg::ui {
 
 static void update_dashboard();
 static void apply_top_buttons_state();
+static lv_obj_t* g_conn_chip = nullptr;
+static lv_obj_t* g_conn_chip_dot = nullptr;
+static lv_obj_t* g_conn_chip_lbl = nullptr;
 
 // Convert a 24-hour integer (0-23) into a display string ("H:00 AM/PM").
 static std::string format_time12(int hour24) {
@@ -50,6 +57,14 @@ static void set_status_text(const char* txt, lv_color_t color) {
 void update_top_label() {
     // Keep brand short in the top-left; reflect state via quick-action pills
     if (state::lbl_conn) lv_label_set_text(state::lbl_conn, "CribGuard");
+    if (g_conn_chip_dot) {
+        lv_color_t dot = state::connected ? lv_color_hex(0x3BD16F) : lv_color_hex(0xD15C5C);
+        lv_obj_set_style_bg_color(g_conn_chip_dot, dot, 0);
+    }
+    if (g_conn_chip_lbl) {
+        lv_label_set_text(g_conn_chip_lbl, state::connected ? "Connected" : "Offline");
+        lv_obj_set_style_text_color(g_conn_chip_lbl, theme::text_main(), 0);
+    }
     apply_top_buttons_state();
     std::string log_s = std::string("brand=CribGuard, conn=") + (state::connected ? "on" : "off")
         + ", vol=" + std::to_string(state::volume)
@@ -85,6 +100,24 @@ static void on_btn_pause(lv_event_t* /*e*/) {
 // Handler for the simple media Stop button (simulator-only).
 static void on_btn_stop(lv_event_t* /*e*/) {
     set_status_text("Stopped", lv_color_hex(0x444444));
+}
+
+static void on_status_async(void* p) {
+    bool ok = (reinterpret_cast<std::uintptr_t>(p) != 0);
+    state::connected = ok;
+    update_top_label();
+}
+
+static std::atomic<bool> g_status_in_flight{false};
+static lv_timer_t* g_status_timer = nullptr;
+
+static void request_status_check() {
+    if (g_status_in_flight.exchange(true)) return;
+    std::thread([](){
+        const bool ok = baby_pi_check_status();
+        lv_async_call(on_status_async, reinterpret_cast<void*>(static_cast<std::uintptr_t>(ok)));
+        g_status_in_flight.store(false);
+    }).detach();
 }
 
 static void vol_apply_visuals();
@@ -224,7 +257,7 @@ static void apply_top_buttons_state() {
         lv_obj_set_style_bg_opa(state::btn_quiet, LV_OPA_40, 0);
         lv_obj_t* lbl = lv_obj_get_child(state::btn_quiet, 0);
         if (lbl) {
-            lv_label_set_text(lbl, state::quiet_hours ? "Quiet On" : "Quiet Off");
+            lv_label_set_text(lbl, state::quiet_hours ? LV_SYMBOL_MUTE " Quiet On" : LV_SYMBOL_VOLUME_MAX " Quiet Off");
             lv_obj_set_style_text_color(lbl, fg, 0);
         }
     }
@@ -236,7 +269,7 @@ static void apply_top_buttons_state() {
         lv_obj_set_style_bg_opa(state::btn_conn, LV_OPA_40, 0);
         lv_obj_t* lbl = lv_obj_get_child(state::btn_conn, 0);
         if (lbl) {
-            lv_label_set_text(lbl, state::connected ? "Connected" : "Offline");
+            lv_label_set_text(lbl, state::connected ? LV_SYMBOL_WIFI " Connected" : LV_SYMBOL_CLOSE " Offline");
             lv_obj_set_style_text_color(lbl, fg, 0);
         }
     }
@@ -265,22 +298,67 @@ void build_main_screen() {
 
     lv_obj_set_style_bg_color(top, lv_color_hex(0x1E232A), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_hor(top, 16, 0);
-    lv_obj_set_style_pad_ver(top, 10, 0);
+    lv_obj_set_style_pad_hor(top, theme::sp16, 0);
+    lv_obj_set_style_pad_ver(top, theme::sp10, 0);
     lv_obj_set_style_border_width(top, 1, 0);
     lv_obj_set_style_border_color(top, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_border_side(top, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_outline_opa(top, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_opa(top, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(top, [](lv_event_t* e){
+        if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+            g_conn_chip = nullptr;
+            g_conn_chip_dot = nullptr;
+            g_conn_chip_lbl = nullptr;
+            state::lbl_conn = nullptr;
+        }
+    }, LV_EVENT_DELETE, nullptr);
 
     lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Left label (ellipsis)
-    state::lbl_conn = lv_label_create(top);
-    lv_obj_set_style_text_color(state::lbl_conn, lv_color_hex(0xEDEFF2), 0);
+    // Left group (brand + connection chip)
+    lv_obj_t* left_grp = lv_obj_create(top);
+    lv_obj_clear_flag(left_grp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(left_grp, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(left_grp, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(left_grp, 0, 0);
+    lv_obj_set_style_pad_all(left_grp, 0, 0);
+    lv_obj_set_style_pad_column(left_grp, theme::sp8, 0);
+    lv_obj_set_flex_flow(left_grp, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(left_grp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_size(left_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+    state::lbl_conn = lv_label_create(left_grp);
+    lv_obj_set_style_text_color(state::lbl_conn, theme::text_main(), 0);
     lv_obj_set_style_pad_left(state::lbl_conn, 2, 0);
-    lv_obj_set_style_pad_right(state::lbl_conn, 8, 0);
+    lv_obj_set_style_pad_right(state::lbl_conn, theme::sp8, 0);
+
+    g_conn_chip = lv_obj_create(left_grp);
+    lv_obj_clear_flag(g_conn_chip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(g_conn_chip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(g_conn_chip, lv_color_hex(0x1B2128), 0);
+    lv_obj_set_style_bg_opa(g_conn_chip, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_conn_chip, 0, 0);
+    lv_obj_set_style_radius(g_conn_chip, theme::radius_pill, 0);
+    lv_obj_set_style_pad_hor(g_conn_chip, theme::sp8, 0);
+    lv_obj_set_style_pad_ver(g_conn_chip, theme::sp4, 0);
+    lv_obj_set_style_pad_column(g_conn_chip, theme::sp6, 0);
+    lv_obj_set_flex_flow(g_conn_chip, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(g_conn_chip, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_size(g_conn_chip, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+    g_conn_chip_dot = lv_obj_create(g_conn_chip);
+    lv_obj_set_size(g_conn_chip_dot, 8, 8);
+    lv_obj_set_style_radius(g_conn_chip_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(g_conn_chip_dot, 0, 0);
+    lv_obj_set_style_bg_color(g_conn_chip_dot, lv_color_hex(0x3BD16F), 0);
+    lv_obj_set_style_bg_opa(g_conn_chip_dot, LV_OPA_COVER, 0);
+
+    g_conn_chip_lbl = lv_label_create(g_conn_chip);
+    lv_label_set_text(g_conn_chip_lbl, "Connected");
+    lv_obj_set_style_text_color(g_conn_chip_lbl, theme::text_main(), 0);
+
     update_top_label();
 
     // Right controls (quick-action pills and dialogs)
@@ -298,7 +376,7 @@ void build_main_screen() {
     {
         lv_obj_t* btn = lv_btn_create(right_grp);
         style_button_tonal(btn);
-        set_centered_button_label(btn, "Library");
+        set_centered_button_label(btn, LV_SYMBOL_LIST " Library");
         lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_library_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
     }
 
@@ -306,25 +384,25 @@ void build_main_screen() {
     {
         lv_obj_t* btn = lv_btn_create(right_grp);
         style_button_tonal(btn);
-        set_centered_button_label(btn, "Lullabies");
+        set_centered_button_label(btn, LV_SYMBOL_AUDIO " Lullabies");
         lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_lullabies_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
     }
 
     // Quick-action pills instead of switches
     state::btn_quiet = lv_btn_create(right_grp);
     style_button_pill(state::btn_quiet);
-    set_centered_button_label(state::btn_quiet, "Quiet");
+    set_centered_button_label(state::btn_quiet, LV_SYMBOL_MUTE " Quiet");
     lv_obj_add_event_cb(state::btn_quiet, on_top_quiet_click, LV_EVENT_CLICKED, nullptr);
 
     state::btn_conn = lv_btn_create(right_grp);
     style_button_pill(state::btn_conn);
-    set_centered_button_label(state::btn_conn, "Conn");
+    set_centered_button_label(state::btn_conn, LV_SYMBOL_WIFI " Conn");
     lv_obj_add_event_cb(state::btn_conn, on_top_conn_click, LV_EVENT_CLICKED, nullptr);
 
     // Camera open button
     lv_obj_t* btn_cam = lv_btn_create(right_grp);
     style_button_tonal(btn_cam);
-    set_centered_button_label(btn_cam, "Cam");
+    set_centered_button_label(btn_cam, LV_SYMBOL_VIDEO " Cam");
     lv_obj_add_event_cb(btn_cam, [](lv_event_t* /*e*/){ build_camera_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_gear = lv_btn_create(right_grp);
@@ -343,10 +421,13 @@ void build_main_screen() {
     lv_obj_set_style_border_width(state::dash_card, 1, 0);
     lv_obj_set_style_border_color(state::dash_card, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_radius(state::dash_card, 10, 0);
-    lv_obj_set_style_pad_hor(state::dash_card, 16, 0);
-    lv_obj_set_style_pad_ver(state::dash_card, 14, 0);
+    lv_obj_set_style_shadow_width(state::dash_card, 24, 0);
+    lv_obj_set_style_shadow_opa(state::dash_card, LV_OPA_20, 0);
+    lv_obj_set_style_shadow_color(state::dash_card, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_pad_hor(state::dash_card, theme::sp16, 0);
+    lv_obj_set_style_pad_ver(state::dash_card, theme::sp14, 0);
     lv_obj_set_flex_flow(state::dash_card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(state::dash_card, 12, 0);
+    lv_obj_set_style_pad_row(state::dash_card, theme::sp12, 0);
 
     // Hero area with ring and status label
     lv_obj_t* dash_hero = lv_obj_create(state::dash_card);
@@ -368,6 +449,7 @@ void build_main_screen() {
 
     state::lbl_status = lv_label_create(dash_hero);
     lv_label_set_text(state::lbl_status, "Calm");
+    // Use default font to avoid missing font symbols in LVGL builds.
     lv_obj_set_style_text_font(state::lbl_status, LV_FONT_DEFAULT, 0);
     lv_obj_set_style_text_color(state::lbl_status, lv_color_hex(0x22AA22), 0);
     lv_obj_set_style_text_align(state::lbl_status, LV_TEXT_ALIGN_CENTER, 0);
@@ -382,7 +464,7 @@ void build_main_screen() {
     lv_obj_set_style_bg_opa(stats, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(stats, 0, 0);
     lv_obj_set_style_pad_all(stats, 0, 0);
-    lv_obj_set_style_pad_column(stats, 12, 0);
+    lv_obj_set_style_pad_column(stats, theme::sp16, 0);
     lv_obj_set_flex_flow(stats, LV_FLEX_FLOW_ROW);
     // Distribute the three tiles across the full row so they read visually centered.
     lv_obj_set_flex_align(stats, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -417,9 +499,9 @@ void build_main_screen() {
         return tile;
     };
 
-    make_tile("Connection", &state::stat_conn);
-    make_tile("Volume",     &state::stat_vol);
-    make_tile("Quiet Hours",&state::stat_qh);
+    make_tile(LV_SYMBOL_WIFI " Connection", &state::stat_conn);
+    make_tile(LV_SYMBOL_VOLUME_MAX " Volume",     &state::stat_vol);
+    make_tile(LV_SYMBOL_MUTE " Quiet Hours",&state::stat_qh);
 
     update_dashboard();
 
@@ -431,13 +513,13 @@ void build_main_screen() {
     lv_obj_set_style_bg_opa(row1, LV_OPA_COVER, 0);
     lv_obj_clear_flag(row1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row1, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_pad_all(row1, 12, 0);
-    lv_obj_set_style_border_width(row1, 1, 0);
+    lv_obj_set_style_pad_all(row1, theme::sp12, 0);
+    lv_obj_set_style_border_width(row1, 0, 0);
     lv_obj_set_style_border_color(row1, lv_color_hex(0x2A2F36), 0);
     lv_obj_set_style_radius(row1, 8, 0);
     lv_obj_set_flex_flow(row1, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row1, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(row1, 14, 0);
+    lv_obj_set_style_pad_column(row1, theme::sp14, 0);
 
     auto make_btn = [&](const char* txt, const char* role) {
         lv_obj_t* b = lv_btn_create(row1);
@@ -461,29 +543,30 @@ void build_main_screen() {
     lv_obj_set_style_bg_opa(row2, LV_OPA_COVER, 0);
     lv_obj_clear_flag(row2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row2, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_pad_all(row2, 12, 0);
+    lv_obj_set_style_pad_all(row2, theme::sp12, 0);
     lv_obj_set_style_border_width(row2, 1, 0);
     lv_obj_set_style_border_color(row2, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_side(row2, LV_BORDER_SIDE_TOP, 0);
     // Square corners so the bar sits flush to the bottom edge (no visible "gap").
     lv_obj_set_style_radius(row2, 0, 0);
     lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
     // Keep controls left-aligned and let the volume slider expand to the right.
     // This prevents the slider from looking "floated" and keeps spacing consistent.
     lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(row2, 14, 0);
+    lv_obj_set_style_pad_column(row2, theme::sp14, 0);
 
     auto make_ctrl_btn = [&](const char* txt, lv_event_cb_t cb) {
         lv_obj_t* b = lv_btn_create(row2);
-        lv_obj_set_size(b, 140, 56);
+        lv_obj_set_size(b, 80, 56);
         style_button_tonal_ex(b, 8, theme::sp12, theme::sp8);
         set_centered_button_label(b, txt);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
         return b;
     };
 
-    make_ctrl_btn("Play",  on_btn_play);
-    make_ctrl_btn("Pause", on_btn_pause);
-    make_ctrl_btn("Stop",  on_btn_stop);
+    make_ctrl_btn(LV_SYMBOL_PLAY,  on_btn_play);
+    make_ctrl_btn(LV_SYMBOL_PAUSE, on_btn_pause);
+    make_ctrl_btn(LV_SYMBOL_STOP,  on_btn_stop);
 
     // Flexible spacer so the slider hugs the right side (removes awkward empty space).
     {
@@ -502,7 +585,7 @@ void build_main_screen() {
     lv_obj_set_style_bg_opa(vol_grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(vol_grp, 0, 0);
     lv_obj_set_style_pad_all(vol_grp, 0, 0);
-    lv_obj_set_style_pad_column(vol_grp, 6, 0);
+    lv_obj_set_style_pad_column(vol_grp, theme::sp6, 0);
     lv_obj_set_flex_flow(vol_grp, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(vol_grp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_size(vol_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -583,6 +666,14 @@ void build_main_screen() {
     vol_apply_visuals();
 
     log_line("[UI] UI built");
+
+    // Periodically check Baby Pi status and reflect it in the UI.
+    if (!g_status_timer) {
+        request_status_check();
+        g_status_timer = lv_timer_create([](lv_timer_t* /*t*/){
+            request_status_check();
+        }, 5000, nullptr);
+    }
 }
 
 } // namespace cg::ui

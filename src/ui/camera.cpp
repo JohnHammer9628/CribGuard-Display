@@ -290,17 +290,17 @@ void build_camera_dialog(lv_obj_t* parent) {
 
     lv_obj_t* btn_play = lv_btn_create(row_ctrls);
     style_button_tonal_ex(btn_play, 6, theme::sp12, theme::sp8);
-    set_centered_button_label(btn_play, "Play");
+    set_centered_button_label(btn_play, LV_SYMBOL_PLAY " Play");
     lv_obj_add_event_cb(btn_play, on_cam_play, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_pause = lv_btn_create(row_ctrls);
     style_button_tonal_ex(btn_pause, 6, theme::sp12, theme::sp8);
-    set_centered_button_label(btn_pause, "Pause");
+    set_centered_button_label(btn_pause, LV_SYMBOL_PAUSE " Pause");
     lv_obj_add_event_cb(btn_pause, on_cam_pause, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_stop = lv_btn_create(row_ctrls);
     style_button_tonal_ex(btn_stop, 6, theme::sp12, theme::sp8);
-    set_centered_button_label(btn_stop, "Stop");
+    set_centered_button_label(btn_stop, LV_SYMBOL_STOP " Stop");
     lv_obj_add_event_cb(btn_stop, on_cam_stop, LV_EVENT_CLICKED, nullptr);
 
     // spacer

@@ -231,13 +231,13 @@ void build_lullabies_dialog(lv_obj_t* parent) {
 
     lv_obj_t* btn_close2 = lv_btn_create(hdr_btns);
     style_button_tonal(btn_close2);
-    set_centered_button_label(btn_close2, "Close");
+    set_centered_button_label(btn_close2, LV_SYMBOL_CLOSE " Close");
     lv_obj_add_event_cb(btn_close2, [](lv_event_t* /*e*/){ close_lullabies(); }, LV_EVENT_CLICKED, nullptr);
 
     // Record Audio button in Lullabies header
     lv_obj_t* btn_rec = lv_btn_create(hdr_btns);
     style_button_tonal(btn_rec);
-    set_centered_button_label(btn_rec, "Record");
+    set_centered_button_label(btn_rec, LV_SYMBOL_PLUS " Record");
     lv_obj_add_event_cb(btn_rec, [](lv_event_t* /*e*/){
         baby_pi_record_audio(g_audio_record_seconds);
     }, LV_EVENT_CLICKED, nullptr);
@@ -245,7 +245,7 @@ void build_lullabies_dialog(lv_obj_t* parent) {
     // Refresh list button
     lv_obj_t* btn_ref = lv_btn_create(hdr_btns);
     style_button_tonal(btn_ref);
-    set_centered_button_label(btn_ref, "Refresh");
+    set_centered_button_label(btn_ref, LV_SYMBOL_REFRESH " Refresh");
     lv_obj_add_event_cb(btn_ref, [](lv_event_t* /*e*/){
         lullabies_rebuild_list();
     }, LV_EVENT_CLICKED, nullptr);
@@ -253,7 +253,7 @@ void build_lullabies_dialog(lv_obj_t* parent) {
     // Stop playback button
     lv_obj_t* btn_stop_play = lv_btn_create(hdr_btns);
     style_button_tonal(btn_stop_play);
-    set_centered_button_label(btn_stop_play, "Stop Play");
+    set_centered_button_label(btn_stop_play, LV_SYMBOL_STOP " Stop Play");
     lv_obj_add_event_cb(btn_stop_play, [](lv_event_t* /*e*/){
         baby_pi_stop_playback();
     }, LV_EVENT_CLICKED, nullptr);
