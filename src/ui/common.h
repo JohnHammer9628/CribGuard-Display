@@ -17,6 +17,7 @@ extern "C" {
 // Shared theme tokens + UI helper functions used across dialogs/screens.
 namespace cg::ui {
 namespace theme {
+    lv_color_t app_bg();
     lv_color_t surface_bg();
     lv_color_t header_bg();
     lv_color_t border();
@@ -52,6 +53,7 @@ lv_obj_t* build_header(lv_obj_t* sheet, const char* title, lv_obj_t** out_action
 inline void set_centered_button_label(lv_obj_t* btn, const char* text) {
     lv_obj_t* lbl = lv_label_create(btn);
     lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, theme::text_main(), 0);
     lv_obj_center(lbl);
 }
 } // namespace cg::ui

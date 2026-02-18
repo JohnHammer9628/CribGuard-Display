@@ -9,6 +9,7 @@
 
 #include "logging.h"
 #include "ui/common.h"
+#include "ui/dashboard.h"
 #include "ui/state.h"
 
 namespace cg::ui {
@@ -87,7 +88,7 @@ void build_settings_dialog(lv_obj_t* parent) {
         lv_obj_t* l = lv_label_create(r);
         lv_label_set_text(l, left);
         lv_obj_set_width(l, LV_PCT(42));
-        lv_obj_set_style_text_color(l, lv_color_hex(0xEDEFF2), 0);
+        lv_obj_set_style_text_color(l, theme::text_main(), 0);
         if (outRow) *outRow = r;
         return r;
     };
@@ -107,11 +108,11 @@ void build_settings_dialog(lv_obj_t* parent) {
     lv_slider_set_range(sld_default, 0, 100);
     lv_slider_set_value(sld_default, state::volume, LV_ANIM_OFF);
     // slider styling
-    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sld_default, theme::tonal_bg(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(sld_default, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0x7FB3FF), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sld_default, theme::primary_accent(), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(sld_default, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(sld_default, lv_color_hex(0xEDEFF2), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(sld_default, theme::text_main(), LV_PART_KNOB);
     lv_obj_set_style_bg_opa(sld_default, LV_OPA_COVER, LV_PART_KNOB);
 
     // Quiet Hours Enabled
@@ -128,9 +129,9 @@ void build_settings_dialog(lv_obj_t* parent) {
         "12:00 AM\n1:00 AM\n2:00 AM\n3:00 AM\n4:00 AM\n5:00 AM\n6:00 AM\n7:00 AM\n8:00 AM\n9:00 AM\n10:00 AM\n11:00 AM\n"
         "12:00 PM\n1:00 PM\n2:00 PM\n3:00 PM\n4:00 PM\n5:00 PM\n6:00 PM\n7:00 PM\n8:00 PM\n9:00 PM\n10:00 PM\n11:00 PM");
     lv_dropdown_set_selected(dd_start, state::quiet_start);
-    lv_obj_set_style_bg_color(dd_start, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd_start, theme::tonal_bg(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(dd_start, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd_start, lv_color_hex(0xEDEFF2), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd_start, theme::text_main(), LV_PART_MAIN);
 
     // Quiet End Time
     lv_obj_t* row_qend=nullptr; make_row("Quiet End Time", &row_qend);
@@ -140,9 +141,9 @@ void build_settings_dialog(lv_obj_t* parent) {
         "12:00 AM\n1:00 AM\n2:00 AM\n3:00 AM\n4:00 AM\n5:00 AM\n6:00 AM\n7:00 AM\n8:00 AM\n9:00 AM\n10:00 AM\n11:00 AM\n"
         "12:00 PM\n1:00 PM\n2:00 PM\n3:00 PM\n4:00 PM\n5:00 PM\n6:00 PM\n7:00 PM\n8:00 PM\n9:00 PM\n10:00 PM\n11:00 PM");
     lv_dropdown_set_selected(dd_end, state::quiet_end);
-    lv_obj_set_style_bg_color(dd_end, lv_color_hex(0x2A2F36), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd_end, theme::tonal_bg(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(dd_end, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd_end, lv_color_hex(0xEDEFF2), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd_end, theme::text_main(), LV_PART_MAIN);
 
     // Save handler
     lv_obj_add_event_cb(btn_save, [](lv_event_t* e){

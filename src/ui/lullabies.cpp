@@ -145,10 +145,10 @@ static void build_rename_dialog(const char* old_name) {
     lv_obj_t* content = lv_obj_create(g_rename_sheet);
     lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(content, 1);
-    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_color(content, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(content, 1, 0);
-    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(content, theme::border(), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
@@ -262,10 +262,10 @@ void build_lullabies_dialog(lv_obj_t* parent) {
     lv_obj_t* content = lv_obj_create(sheet);
     lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(content, 1);
-    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_color(content, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(content, 1, 0);
-    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(content, theme::border(), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);

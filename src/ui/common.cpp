@@ -1,25 +1,28 @@
 // src/ui/common.cpp
 #include "ui/common.h"
+#include "ui/state.h"
 
 namespace cg::ui {
 
 namespace theme {
+    // Root background for the app.
+    lv_color_t app_bg()          { return state::light_mode ? lv_color_hex(0xF0F2F5) : lv_color_hex(0x0E1116); }
     // Background color for cards/sheets.
-    lv_color_t surface_bg()      { return lv_color_hex(0x16191D); }
+    lv_color_t surface_bg()      { return state::light_mode ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x16191D); }
     // Background color for header bars.
-    lv_color_t header_bg()       { return lv_color_hex(0x1E232A); }
+    lv_color_t header_bg()       { return state::light_mode ? lv_color_hex(0xF7F8FA) : lv_color_hex(0x1E232A); }
     // Default border color used on cards/sheets.
-    lv_color_t border()          { return lv_color_hex(0x2A2F36); }
+    lv_color_t border()          { return state::light_mode ? lv_color_hex(0xD7DDE3) : lv_color_hex(0x2A2F36); }
     // Primary text color.
-    lv_color_t text_main()       { return lv_color_hex(0xEDEFF2); }
+    lv_color_t text_main()       { return state::light_mode ? lv_color_hex(0x1E232A) : lv_color_hex(0xEDEFF2); }
     // Secondary/subtle text color.
-    lv_color_t text_subtle()     { return lv_color_hex(0x9AA3AD); }
+    lv_color_t text_subtle()     { return state::light_mode ? lv_color_hex(0x5E6875) : lv_color_hex(0x9AA3AD); }
     // Tonal button background.
-    lv_color_t tonal_bg()        { return lv_color_hex(0x2A2F36); }
+    lv_color_t tonal_bg()        { return state::light_mode ? lv_color_hex(0xE9EDF2) : lv_color_hex(0x2A2F36); }
     // Tonal button border.
-    lv_color_t tonal_border()    { return lv_color_hex(0x3A4048); }
+    lv_color_t tonal_border()    { return state::light_mode ? lv_color_hex(0xD0D6DD) : lv_color_hex(0x3A4048); }
     // Accent color used for highlights.
-    lv_color_t primary_accent()  { return lv_color_hex(0x7FB3FF); }
+    lv_color_t primary_accent()  { return state::light_mode ? lv_color_hex(0x2F6BFF) : lv_color_hex(0x7FB3FF); }
 
     const int sp4  = 4;
     const int sp6  = 6;

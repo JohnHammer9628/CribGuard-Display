@@ -168,7 +168,7 @@ static void apply_camera_ui_state() {
     }
     if (g_cam_meta_label) {
         lv_label_set_text(g_cam_meta_label, g_cam_playing ? "Live" : "Idle");
-        lv_obj_set_style_text_color(g_cam_meta_label, g_cam_playing ? lv_color_hex(0xB0D7FF) : lv_color_hex(0x9AA3AD), 0);
+        lv_obj_set_style_text_color(g_cam_meta_label, g_cam_playing ? theme::primary_accent() : theme::text_subtle(), 0);
     }
     // Spinner visibility is controlled explicitly via cam_spinner_show/hide
     // Apply sheet sizing for fullscreen
@@ -207,11 +207,11 @@ void build_camera_dialog(lv_obj_t* parent) {
 
     lv_obj_clear_flag(sheet, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(sheet, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(sheet, lv_color_hex(0x16191D), 0);
+    lv_obj_set_style_bg_color(sheet, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(sheet, lv_color_hex(0xEDEFF2), 0);
+    lv_obj_set_style_text_color(sheet, theme::text_main(), 0);
     lv_obj_set_style_border_width(sheet, 1, 0);
-    lv_obj_set_style_border_color(sheet, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(sheet, theme::border(), 0);
     lv_obj_set_style_radius(sheet, 10, 0);
     lv_obj_set_style_shadow_width(sheet, 18, 0);
     lv_obj_set_style_shadow_opa(sheet, LV_OPA_30, 0);
@@ -251,7 +251,7 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(g_camera_surface, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(g_camera_surface, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(g_camera_surface, 1, 0);
-    lv_obj_set_style_border_color(g_camera_surface, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(g_camera_surface, theme::border(), 0);
     lv_obj_set_style_radius(g_camera_surface, 6, 0);
     lv_obj_clear_flag(g_camera_surface, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(g_camera_surface, LV_SCROLLBAR_MODE_OFF);
@@ -270,7 +270,7 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_size(g_cam_spinner, 48, 48);
     lv_obj_center(g_cam_spinner);
     lv_obj_set_style_arc_color(g_cam_spinner, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(g_cam_spinner, lv_color_hex(0x7FB3FF), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(g_cam_spinner, theme::primary_accent(), LV_PART_INDICATOR);
     lv_obj_add_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
 
     // controls row (moved below video)
@@ -278,10 +278,10 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_size(row_ctrls, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_clear_flag(row_ctrls, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row_ctrls, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(row_ctrls, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_color(row_ctrls, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(row_ctrls, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(row_ctrls, 1, 0);
-    lv_obj_set_style_border_color(row_ctrls, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(row_ctrls, theme::border(), 0);
     lv_obj_set_style_border_side(row_ctrls, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_pad_all(row_ctrls, 8, 0);
     lv_obj_set_style_pad_column(row_ctrls, 10, 0);

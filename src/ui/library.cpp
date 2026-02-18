@@ -50,10 +50,10 @@ void build_library_dialog(lv_obj_t* parent) {
     // content placeholder
     lv_obj_t* content = lv_obj_create(g_library_sheet);
     lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(content, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_color(content, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(content, 1, 0);
-    lv_obj_set_style_border_color(content, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(content, theme::border(), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
@@ -61,7 +61,7 @@ void build_library_dialog(lv_obj_t* parent) {
     {
         lv_obj_t* lbl = lv_label_create(content);
         lv_label_set_text(lbl, "Library coming soon");
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0x9AA3AD), 0);
+        lv_obj_set_style_text_color(lbl, theme::text_subtle(), 0);
         lv_obj_center(lbl);
     }
 

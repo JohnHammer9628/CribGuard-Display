@@ -30,9 +30,27 @@ namespace cg::ui {
 
 static void update_dashboard();
 static void apply_top_buttons_state();
+static lv_obj_t* g_top_bar = nullptr;
+static lv_obj_t* g_screen = nullptr;
+static lv_obj_t* g_dash_hero = nullptr;
+static lv_obj_t* g_stats_row = nullptr;
+static lv_obj_t* g_row1 = nullptr;
+static lv_obj_t* g_row2 = nullptr;
+static lv_obj_t* g_vol_icon = nullptr;
 static lv_obj_t* g_conn_chip = nullptr;
 static lv_obj_t* g_conn_chip_dot = nullptr;
 static lv_obj_t* g_conn_chip_lbl = nullptr;
+static std::atomic<bool> g_rebuild_pending{false};
+static std::atomic<bool> g_rebuild_in_progress{false};
+static lv_obj_t* g_tile[3] = {nullptr, nullptr, nullptr};
+static lv_obj_t* g_tile_title[3] = {nullptr, nullptr, nullptr};
+static lv_obj_t* g_tile_value[3] = {nullptr, nullptr, nullptr};
+static lv_obj_t* g_btn_status[3] = {nullptr, nullptr, nullptr};
+static lv_obj_t* g_btn_media[3] = {nullptr, nullptr, nullptr};
+static lv_obj_t* g_btn_library = nullptr;
+static lv_obj_t* g_btn_lullabies = nullptr;
+static lv_obj_t* g_btn_cam = nullptr;
+static lv_obj_t* g_btn_settings = nullptr;
 
 // Convert a 24-hour integer (0-23) into a display string ("H:00 AM/PM").
 static std::string format_time12(int hour24) {
@@ -53,8 +71,23 @@ static void set_status_text(const char* txt, lv_color_t color) {
     update_dashboard();
 }
 
+static void set_btn_label_color(lv_obj_t* btn, lv_color_t color) {
+    if (!btn) return;
+    lv_obj_t* lbl = lv_obj_get_child(btn, 0);
+    if (lbl) lv_obj_set_style_text_color(lbl, color, 0);
+}
+
+static void set_btn_tonal_style(lv_obj_t* btn) {
+    if (!btn) return;
+    lv_obj_set_style_bg_color(btn, theme::tonal_bg(), 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+    lv_obj_set_style_border_color(btn, theme::tonal_border(), 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+}
+
 // Refresh the top-left brand label and quick-action buttons, then update dashboard tiles.
 void update_top_label() {
+    if (g_rebuild_in_progress.load()) return;
     // Keep brand short in the top-left; reflect state via quick-action pills
     if (state::lbl_conn) lv_label_set_text(state::lbl_conn, "CribGuard");
     if (g_conn_chip_dot) {
@@ -145,6 +178,66 @@ struct VolCtrl {
 
 static VolCtrl g_vol;
 
+static void apply_theme() {
+    if (g_screen) lv_obj_set_style_bg_color(g_screen, theme::app_bg(), 0);
+    if (g_top_bar) {
+        lv_obj_set_style_bg_color(g_top_bar, theme::header_bg(), 0);
+        lv_obj_set_style_border_color(g_top_bar, theme::border(), 0);
+    }
+    if (g_conn_chip) lv_obj_set_style_bg_color(g_conn_chip, theme::tonal_bg(), 0);
+    if (g_conn_chip_lbl) lv_obj_set_style_text_color(g_conn_chip_lbl, theme::text_main(), 0);
+    if (state::lbl_conn) lv_obj_set_style_text_color(state::lbl_conn, theme::text_main(), 0);
+
+    if (state::dash_card) {
+        lv_obj_set_style_bg_color(state::dash_card, theme::surface_bg(), 0);
+        lv_obj_set_style_border_color(state::dash_card, theme::border(), 0);
+    }
+    if (g_dash_hero) {
+        lv_obj_set_style_bg_color(g_dash_hero, theme::header_bg(), 0);
+        lv_obj_set_style_border_color(g_dash_hero, theme::border(), 0);
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        if (g_tile[i]) {
+            lv_obj_set_style_bg_color(g_tile[i], theme::header_bg(), 0);
+            lv_obj_set_style_border_color(g_tile[i], theme::border(), 0);
+        }
+        if (g_tile_title[i]) lv_obj_set_style_text_color(g_tile_title[i], theme::text_subtle(), 0);
+        if (g_tile_value[i]) lv_obj_set_style_text_color(g_tile_value[i], theme::text_main(), 0);
+    }
+
+    if (g_row1) {
+        lv_obj_set_style_bg_color(g_row1, theme::surface_bg(), 0);
+        lv_obj_set_style_border_color(g_row1, theme::border(), 0);
+    }
+    if (g_row2) {
+        lv_obj_set_style_bg_color(g_row2, theme::surface_bg(), 0);
+        lv_obj_set_style_border_color(g_row2, theme::border(), 0);
+    }
+    if (g_vol_icon) lv_obj_set_style_text_color(g_vol_icon, theme::text_subtle(), 0);
+    if (g_vol.track) lv_obj_set_style_bg_color(g_vol.track, theme::tonal_bg(), 0);
+    if (g_vol.fill) lv_obj_set_style_bg_color(g_vol.fill, theme::primary_accent(), 0);
+    if (g_vol.knob) lv_obj_set_style_bg_color(g_vol.knob, theme::text_main(), 0);
+
+    set_btn_tonal_style(g_btn_library);
+    set_btn_tonal_style(g_btn_lullabies);
+    set_btn_tonal_style(g_btn_cam);
+    set_btn_tonal_style(g_btn_settings);
+    set_btn_label_color(g_btn_library, theme::text_main());
+    set_btn_label_color(g_btn_lullabies, theme::text_main());
+    set_btn_label_color(g_btn_cam, theme::text_main());
+    set_btn_label_color(g_btn_settings, theme::text_main());
+    for (int i = 0; i < 3; ++i) {
+        set_btn_tonal_style(g_btn_status[i]);
+        set_btn_tonal_style(g_btn_media[i]);
+        set_btn_label_color(g_btn_status[i], theme::text_main());
+        set_btn_label_color(g_btn_media[i], theme::text_main());
+    }
+
+    apply_top_buttons_state();
+    update_top_label();
+}
+
 static void vol_apply_visuals() {
     if (!g_vol.stack || !g_vol.track || !g_vol.fill || !g_vol.knob) return;
     const int v = state::volume;
@@ -205,8 +298,17 @@ static void on_top_conn_click(lv_event_t* /*e*/) {
     apply_top_buttons_state();
 }
 
+// Toggle light/dark theme from the top bar.
+static void on_top_theme_click(lv_event_t* /*e*/) {
+    if (g_rebuild_pending.load() || g_rebuild_in_progress.load()) return;
+    state::light_mode = !state::light_mode;
+    log_line(state::light_mode ? "[UI] theme: light" : "[UI] theme: dark");
+    apply_theme();
+}
+
 // Refresh the dashboard ring and tiles based on current UI state.
 static void update_dashboard() {
+    if (g_rebuild_in_progress.load()) return;
     if (!state::dash_card) return;
 
     // Determine status color and apply to hero ring
@@ -224,7 +326,7 @@ static void update_dashboard() {
     // Connection stat
     if (state::stat_conn) {
         lv_label_set_text(state::stat_conn, state::connected ? "Connected" : "Disconnected");
-        lv_obj_set_style_text_color(state::stat_conn, state::connected ? lv_color_hex(0xB0D7FF) : lv_color_hex(0xFF6B6B), 0);
+        lv_obj_set_style_text_color(state::stat_conn, state::connected ? theme::primary_accent() : lv_color_hex(0xFF6B6B), 0);
     }
     // Volume stat
     if (state::stat_vol) {
@@ -239,20 +341,26 @@ static void update_dashboard() {
             s += " - ";
             s += format_time12(state::quiet_end);
             lv_label_set_text(state::stat_qh, s.c_str());
-            lv_obj_set_style_text_color(state::stat_qh, lv_color_hex(0xB0D7FF), 0);
+            lv_obj_set_style_text_color(state::stat_qh, theme::primary_accent(), 0);
         } else {
             lv_label_set_text(state::stat_qh, "Off");
-            lv_obj_set_style_text_color(state::stat_qh, lv_color_hex(0x9AA3AD), 0);
+            lv_obj_set_style_text_color(state::stat_qh, theme::text_subtle(), 0);
         }
     }
 }
 
 // Update visual state (colors/text) of the top-bar quick-action pills.
 static void apply_top_buttons_state() {
+    if (g_rebuild_in_progress.load()) return;
+    const bool light = state::light_mode;
     // Quiet button
     if (state::btn_quiet) {
-        lv_color_t bg = state::quiet_hours ? lv_color_hex(0x2F3B46) : lv_color_hex(0x2A2F36);
-        lv_color_t fg = state::quiet_hours ? lv_color_hex(0xB0D7FF) : lv_color_hex(0xEDEFF2);
+        lv_color_t bg = state::quiet_hours
+            ? (light ? lv_color_hex(0xE3EEF9) : lv_color_hex(0x2F3B46))
+            : theme::tonal_bg();
+        lv_color_t fg = state::quiet_hours
+            ? (light ? theme::primary_accent() : lv_color_hex(0xB0D7FF))
+            : theme::text_main();
         lv_obj_set_style_bg_color(state::btn_quiet, bg, 0);
         lv_obj_set_style_bg_opa(state::btn_quiet, LV_OPA_40, 0);
         lv_obj_t* lbl = lv_obj_get_child(state::btn_quiet, 0);
@@ -263,13 +371,29 @@ static void apply_top_buttons_state() {
     }
     // Connection button
     if (state::btn_conn) {
-        lv_color_t bg = state::connected ? lv_color_hex(0x294236) : lv_color_hex(0x3F2A2A);
-        lv_color_t fg = state::connected ? lv_color_hex(0xB2F5DC) : lv_color_hex(0xFFB3B3);
+        lv_color_t bg = state::connected
+            ? (light ? lv_color_hex(0xE4F6EC) : lv_color_hex(0x294236))
+            : (light ? lv_color_hex(0xFBEAEA) : lv_color_hex(0x3F2A2A));
+        lv_color_t fg = state::connected
+            ? (light ? lv_color_hex(0x1D7A46) : lv_color_hex(0xB2F5DC))
+            : (light ? lv_color_hex(0xB83B3B) : lv_color_hex(0xFFB3B3));
         lv_obj_set_style_bg_color(state::btn_conn, bg, 0);
         lv_obj_set_style_bg_opa(state::btn_conn, LV_OPA_40, 0);
         lv_obj_t* lbl = lv_obj_get_child(state::btn_conn, 0);
         if (lbl) {
             lv_label_set_text(lbl, state::connected ? LV_SYMBOL_WIFI " Connected" : LV_SYMBOL_CLOSE " Offline");
+            lv_obj_set_style_text_color(lbl, fg, 0);
+        }
+    }
+    // Theme button
+    if (state::btn_theme) {
+        lv_color_t bg = state::light_mode ? lv_color_hex(0xE3EEF9) : theme::tonal_bg();
+        lv_color_t fg = state::light_mode ? theme::primary_accent() : theme::text_main();
+        lv_obj_set_style_bg_color(state::btn_theme, bg, 0);
+        lv_obj_set_style_bg_opa(state::btn_theme, LV_OPA_40, 0);
+        lv_obj_t* lbl = lv_obj_get_child(state::btn_theme, 0);
+        if (lbl) {
+            lv_label_set_text(lbl, state::light_mode ? "Light" : "Dark");
             lv_obj_set_style_text_color(lbl, fg, 0);
         }
     }
@@ -279,11 +403,12 @@ static void apply_top_buttons_state() {
 void build_main_screen() {
     // Root screen (no scroll)
     lv_obj_t* screen = lv_obj_create(nullptr);
+    g_screen = screen;
     // Ensure no default padding/margins affect bottom-aligned bars.
     lv_obj_remove_style_all(screen);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0E1116), 0);
+    lv_obj_set_style_bg_color(screen, theme::app_bg(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(screen, 0, 0);
     lv_screen_load(screen);
@@ -296,21 +421,27 @@ void build_main_screen() {
     lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(top, LV_SCROLLBAR_MODE_OFF);
 
-    lv_obj_set_style_bg_color(top, lv_color_hex(0x1E232A), 0);
+    g_top_bar = top;
+    lv_obj_set_style_bg_color(top, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_hor(top, theme::sp16, 0);
     lv_obj_set_style_pad_ver(top, theme::sp10, 0);
     lv_obj_set_style_border_width(top, 1, 0);
-    lv_obj_set_style_border_color(top, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(top, theme::border(), 0);
     lv_obj_set_style_border_side(top, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_outline_opa(top, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_opa(top, LV_OPA_TRANSP, 0);
     lv_obj_add_event_cb(top, [](lv_event_t* e){
         if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+            if (lv_event_get_target(e) != g_top_bar) return;
+            g_top_bar = nullptr;
             g_conn_chip = nullptr;
             g_conn_chip_dot = nullptr;
             g_conn_chip_lbl = nullptr;
             state::lbl_conn = nullptr;
+            state::btn_quiet = nullptr;
+            state::btn_conn = nullptr;
+            state::btn_theme = nullptr;
         }
     }, LV_EVENT_DELETE, nullptr);
 
@@ -337,7 +468,7 @@ void build_main_screen() {
     g_conn_chip = lv_obj_create(left_grp);
     lv_obj_clear_flag(g_conn_chip, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(g_conn_chip, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(g_conn_chip, lv_color_hex(0x1B2128), 0);
+    lv_obj_set_style_bg_color(g_conn_chip, theme::tonal_bg(), 0);
     lv_obj_set_style_bg_opa(g_conn_chip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(g_conn_chip, 0, 0);
     lv_obj_set_style_radius(g_conn_chip, theme::radius_pill, 0);
@@ -375,6 +506,7 @@ void build_main_screen() {
     // Library button
     {
         lv_obj_t* btn = lv_btn_create(right_grp);
+        g_btn_library = btn;
         style_button_tonal(btn);
         set_centered_button_label(btn, LV_SYMBOL_LIST " Library");
         lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_library_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
@@ -383,6 +515,7 @@ void build_main_screen() {
     // Lullabies button
     {
         lv_obj_t* btn = lv_btn_create(right_grp);
+        g_btn_lullabies = btn;
         style_button_tonal(btn);
         set_centered_button_label(btn, LV_SYMBOL_AUDIO " Lullabies");
         lv_obj_add_event_cb(btn, [](lv_event_t* /*e*/){ build_lullabies_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
@@ -399,13 +532,20 @@ void build_main_screen() {
     set_centered_button_label(state::btn_conn, LV_SYMBOL_WIFI " Conn");
     lv_obj_add_event_cb(state::btn_conn, on_top_conn_click, LV_EVENT_CLICKED, nullptr);
 
+    state::btn_theme = lv_btn_create(right_grp);
+    style_button_pill(state::btn_theme);
+    set_centered_button_label(state::btn_theme, "Dark");
+    lv_obj_add_event_cb(state::btn_theme, on_top_theme_click, LV_EVENT_CLICKED, nullptr);
+
     // Camera open button
     lv_obj_t* btn_cam = lv_btn_create(right_grp);
+    g_btn_cam = btn_cam;
     style_button_tonal(btn_cam);
     set_centered_button_label(btn_cam, LV_SYMBOL_VIDEO " Cam");
     lv_obj_add_event_cb(btn_cam, [](lv_event_t* /*e*/){ build_camera_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_gear = lv_btn_create(right_grp);
+    g_btn_settings = btn_gear;
     style_button_tonal(btn_gear);
     set_centered_button_label(btn_gear, LV_SYMBOL_SETTINGS);
     lv_obj_add_event_cb(btn_gear, [](lv_event_t* /*e*/){ build_settings_dialog((lv_obj_t*)lv_screen_active()); }, LV_EVENT_CLICKED, nullptr);
@@ -416,10 +556,10 @@ void build_main_screen() {
     state::dash_card = lv_obj_create(screen);
     lv_obj_set_size(state::dash_card, LV_PCT(92), 360);
     lv_obj_align(state::dash_card, LV_ALIGN_CENTER, 0, -20);
-    lv_obj_set_style_bg_color(state::dash_card, lv_color_hex(0x16191D), 0);
+    lv_obj_set_style_bg_color(state::dash_card, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(state::dash_card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(state::dash_card, 1, 0);
-    lv_obj_set_style_border_color(state::dash_card, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(state::dash_card, theme::border(), 0);
     lv_obj_set_style_radius(state::dash_card, 10, 0);
     lv_obj_set_style_shadow_width(state::dash_card, 24, 0);
     lv_obj_set_style_shadow_opa(state::dash_card, LV_OPA_20, 0);
@@ -431,11 +571,12 @@ void build_main_screen() {
 
     // Hero area with ring and status label
     lv_obj_t* dash_hero = lv_obj_create(state::dash_card);
+    g_dash_hero = dash_hero;
     lv_obj_set_size(dash_hero, LV_PCT(100), 220);
-    lv_obj_set_style_bg_color(dash_hero, lv_color_hex(0x1E232A), 0);
+    lv_obj_set_style_bg_color(dash_hero, theme::header_bg(), 0);
     lv_obj_set_style_bg_opa(dash_hero, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(dash_hero, 1, 0);
-    lv_obj_set_style_border_color(dash_hero, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(dash_hero, theme::border(), 0);
     lv_obj_set_style_radius(dash_hero, 8, 0);
     lv_obj_set_style_pad_all(dash_hero, 0, 0);
 
@@ -458,6 +599,7 @@ void build_main_screen() {
 
     // Stats row
     lv_obj_t* stats = lv_obj_create(state::dash_card);
+    g_stats_row = stats;
     lv_obj_set_size(stats, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_clear_flag(stats, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(stats, LV_SCROLLBAR_MODE_OFF);
@@ -469,13 +611,14 @@ void build_main_screen() {
     // Distribute the three tiles across the full row so they read visually centered.
     lv_obj_set_flex_align(stats, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    int tile_idx = 0;
     auto make_tile = [&](const char* title, lv_obj_t** outVal){
         lv_obj_t* tile = lv_obj_create(stats);
         lv_obj_set_size(tile, LV_PCT(32), LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(tile, lv_color_hex(0x1E232A), 0);
+        lv_obj_set_style_bg_color(tile, theme::header_bg(), 0);
         lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(tile, 1, 0);
-        lv_obj_set_style_border_color(tile, lv_color_hex(0x2A2F36), 0);
+        lv_obj_set_style_border_color(tile, theme::border(), 0);
         lv_obj_set_style_radius(tile, 8, 0);
         lv_obj_set_style_pad_hor(tile, 12, 0);
         lv_obj_set_style_pad_ver(tile, 10, 0);
@@ -484,18 +627,24 @@ void build_main_screen() {
 
         lv_obj_t* t = lv_label_create(tile);
         lv_label_set_text(t, title);
-        lv_obj_set_style_text_color(t, lv_color_hex(0x9AA3AD), 0);
+        lv_obj_set_style_text_color(t, theme::text_subtle(), 0);
         // Center label text within the tile.
         lv_obj_set_width(t, LV_PCT(100));
         lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
 
         lv_obj_t* v = lv_label_create(tile);
-        lv_obj_set_style_text_color(v, lv_color_hex(0xEDEFF2), 0);
+        lv_obj_set_style_text_color(v, theme::text_main(), 0);
         lv_label_set_text(v, "--");
         // Center value text within the tile.
         lv_obj_set_width(v, LV_PCT(100));
         lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
         if (outVal) *outVal = v;
+        if (tile_idx < 3) {
+            g_tile[tile_idx] = tile;
+            g_tile_title[tile_idx] = t;
+            g_tile_value[tile_idx] = v;
+        }
+        tile_idx++;
         return tile;
     };
 
@@ -507,15 +656,16 @@ void build_main_screen() {
 
     // Status buttons row
     lv_obj_t* row1 = lv_obj_create(screen);
+    g_row1 = row1;
     lv_obj_set_size(row1, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_align(row1, LV_ALIGN_BOTTOM_MID, 0, -100);
-    lv_obj_set_style_bg_color(row1, lv_color_hex(0x16191D), 0);
+    lv_obj_set_style_bg_color(row1, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(row1, LV_OPA_COVER, 0);
     lv_obj_clear_flag(row1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row1, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_all(row1, theme::sp12, 0);
     lv_obj_set_style_border_width(row1, 0, 0);
-    lv_obj_set_style_border_color(row1, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(row1, theme::border(), 0);
     lv_obj_set_style_radius(row1, 8, 0);
     lv_obj_set_flex_flow(row1, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row1, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -530,22 +680,23 @@ void build_main_screen() {
         return b;
     };
 
-    make_btn("Calm", "calm");
-    make_btn("Cry", "cry");
-    make_btn("Motion", "motion");
+    g_btn_status[0] = make_btn("Calm", "calm");
+    g_btn_status[1] = make_btn("Cry", "cry");
+    g_btn_status[2] = make_btn("Motion", "motion");
 
     // Media controls + volume slider row (simulator-only convenience).
     lv_obj_t* row2 = lv_obj_create(screen);
+    g_row2 = row2;
     lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
     // Keep this bar flush to the bottom edge of the window.
     lv_obj_align(row2, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(row2, lv_color_hex(0x16191D), 0);
+    lv_obj_set_style_bg_color(row2, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(row2, LV_OPA_COVER, 0);
     lv_obj_clear_flag(row2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row2, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_all(row2, theme::sp12, 0);
     lv_obj_set_style_border_width(row2, 1, 0);
-    lv_obj_set_style_border_color(row2, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_border_color(row2, theme::border(), 0);
     lv_obj_set_style_border_side(row2, LV_BORDER_SIDE_TOP, 0);
     // Square corners so the bar sits flush to the bottom edge (no visible "gap").
     lv_obj_set_style_radius(row2, 0, 0);
@@ -564,9 +715,9 @@ void build_main_screen() {
         return b;
     };
 
-    make_ctrl_btn(LV_SYMBOL_PLAY,  on_btn_play);
-    make_ctrl_btn(LV_SYMBOL_PAUSE, on_btn_pause);
-    make_ctrl_btn(LV_SYMBOL_STOP,  on_btn_stop);
+    g_btn_media[0] = make_ctrl_btn(LV_SYMBOL_PLAY,  on_btn_play);
+    g_btn_media[1] = make_ctrl_btn(LV_SYMBOL_PAUSE, on_btn_pause);
+    g_btn_media[2] = make_ctrl_btn(LV_SYMBOL_STOP,  on_btn_stop);
 
     // Flexible spacer so the slider hugs the right side (removes awkward empty space).
     {
@@ -591,6 +742,7 @@ void build_main_screen() {
     lv_obj_set_size(vol_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
     lv_obj_t* vol_icon = lv_label_create(vol_grp);
+    g_vol_icon = vol_icon;
     lv_label_set_text(vol_icon, LV_SYMBOL_VOLUME_MAX);
     lv_obj_set_style_text_color(vol_icon, theme::text_subtle(), 0);
 
@@ -617,7 +769,9 @@ void build_main_screen() {
     // If the screen is rebuilt/destroyed, prevent stale pointers from being used.
     lv_obj_add_event_cb(stack, [](lv_event_t* e){
         if (lv_event_get_code(e) == LV_EVENT_DELETE) {
-            g_vol = VolCtrl{};
+            if (lv_event_get_target(e) == g_vol.stack) {
+                g_vol = VolCtrl{};
+            }
         }
     }, LV_EVENT_DELETE, nullptr);
 
@@ -627,7 +781,7 @@ void build_main_screen() {
     lv_obj_clear_flag(track, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_size(track, g_vol.track_w, g_vol.track_h);
-    lv_obj_set_style_bg_color(track, lv_color_hex(0x2A2F36), 0);
+    lv_obj_set_style_bg_color(track, theme::tonal_bg(), 0);
     lv_obj_set_style_bg_opa(track, LV_OPA_40, 0);
     lv_obj_set_style_radius(track, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(track, 0, 0);
@@ -640,7 +794,7 @@ void build_main_screen() {
     lv_obj_set_scrollbar_mode(fill, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_height(fill, g_vol.track_h);
     lv_obj_set_width(fill, 0);
-    lv_obj_set_style_bg_color(fill, lv_color_hex(0x7FB3FF), 0);
+    lv_obj_set_style_bg_color(fill, theme::primary_accent(), 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(fill, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(fill, 0, 0);
@@ -652,7 +806,7 @@ void build_main_screen() {
     lv_obj_clear_flag(knob, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(knob, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_size(knob, g_vol.knob_sz, g_vol.knob_sz);
-    lv_obj_set_style_bg_color(knob, lv_color_hex(0xEDEFF2), 0);
+    lv_obj_set_style_bg_color(knob, theme::text_main(), 0);
     lv_obj_set_style_bg_opa(knob, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(knob, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(knob, 0, 0);
@@ -674,6 +828,44 @@ void build_main_screen() {
             request_status_check();
         }, 5000, nullptr);
     }
+}
+
+// Rebuild the UI (used when switching between light/dark modes).
+void rebuild_main_screen() {
+    log_line("[UI] rebuild: start");
+    // Clear widget pointers to avoid touching old-screen objects during rebuild.
+    g_top_bar = nullptr;
+    g_conn_chip = nullptr;
+    g_conn_chip_dot = nullptr;
+    g_conn_chip_lbl = nullptr;
+    state::lbl_conn = nullptr;
+    state::btn_quiet = nullptr;
+    state::btn_conn = nullptr;
+    state::btn_theme = nullptr;
+    state::dash_card = nullptr;
+    state::dash_ring = nullptr;
+    state::stat_conn = nullptr;
+    state::stat_vol = nullptr;
+    state::stat_qh = nullptr;
+    state::lbl_status = nullptr;
+    g_vol = VolCtrl{};
+    build_main_screen();
+    log_line("[UI] rebuild: end");
+}
+
+static void on_rebuild_async(void* /*p*/) {
+    g_rebuild_in_progress.store(true);
+    g_rebuild_pending.store(false);
+    log_line("[UI] rebuild: async");
+    // Release any active input to avoid dangling pressed objects.
+    lv_indev_reset(NULL, NULL);
+    rebuild_main_screen();
+    g_rebuild_in_progress.store(false);
+}
+
+void request_rebuild() {
+    if (g_rebuild_pending.exchange(true)) return;
+    lv_async_call(on_rebuild_async, nullptr);
 }
 
 } // namespace cg::ui
