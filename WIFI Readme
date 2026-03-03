@@ -1,18 +1,119 @@
-How to use it
+# Raspberry Pi 5 Direct Wi-Fi Link (Static IP Setup)
 
-Copy to each Pi as pi-wifi-link.sh, if needed then:
+This project configures two Raspberry Pi 5 devices on the latest
+Raspberry Pi OS to communicate directly over Wi-Fi without requiring a
+router or internet connection.
 
-	chmod +x pi-wifi-link.sh
+-   Pi #1 acts as a Wi-Fi Access Point (AP)\
+-   Pi #2 connects as a client\
+-   Both use static IP addresses\
+-   SSH access is enabled\
+-   No DHCP server is used
 
-On Pi #1 (the AP):
+------------------------------------------------------------------------
 
-	sudo SSID=Crib-Guard PSK='password' ./pi-wifi-link.sh ap
+## Network Layout
 
-On Pi #2 (the client):
+  Device   Role                 IP Address
+  -------- -------------------- -------------------------
+  Pi #1    Access Point         192.168.50.1
+  Pi #2    Client               192.168.50.2
+  Laptop   Manual IP Required   192.168.50.10 (example)
 
-	sudo SSID=Crib-Guard PSK='password' ./pi-wifi-link.sh client
+Subnet: `255.255.255.0`
 
-On your laptop, join Wi-Fi Pi-Network, then:
+------------------------------------------------------------------------
 
-	ssh pi@192.168.50.1
-	ssh pi@192.168.50.2
+# How To Use
+
+Copy the script to **both** Pis as:
+
+    pi-wifi-link.sh
+
+If needed:
+
+    chmod +x pi-wifi-link.sh
+
+------------------------------------------------------------------------
+
+## On Pi #1 (Access Point)
+
+    sudo SSID=Crib-Guard PSK='password' ./pi-wifi-link.sh ap
+
+------------------------------------------------------------------------
+
+## On Pi #2 (Client)
+
+    sudo SSID=Crib-Guard PSK='password' ./pi-wifi-link.sh client
+
+------------------------------------------------------------------------
+
+# IMPORTANT --- Configure Static IP on Your Laptop
+
+This setup does **not** run a DHCP server.
+
+You must manually configure your laptop's network settings after
+connecting to the Wi-Fi network.
+
+After joining:
+
+    SSID: Crib-Guard
+
+Set your laptop's IPv4 settings to:
+
+-   IP Address: `192.168.50.10`
+-   Subnet Mask: `255.255.255.0`
+-   Gateway: `192.168.50.1` (optional but recommended)
+-   DNS: leave blank
+
+Your laptop must be in the `192.168.50.x` range.
+
+------------------------------------------------------------------------
+
+# SSH Access
+
+Once connected:
+
+    ssh pi@192.168.50.1   # Access Point Pi
+    ssh pi@192.168.50.2   # Client Pi
+
+------------------------------------------------------------------------
+
+# Persistence
+
+-   Network configuration persists across reboots\
+-   SSH is enabled automatically\
+-   Connections auto-reconnect on startup
+
+------------------------------------------------------------------------
+
+# Troubleshooting
+
+If SSH hangs:
+
+1.  Verify laptop IP is in `192.168.50.x`
+
+2.  Confirm ping works:
+
+        ping 192.168.50.1
+
+3.  On the Pi, confirm SSH is running:
+
+        sudo systemctl status ssh
+
+------------------------------------------------------------------------
+
+# Notes
+
+-   No internet sharing is configured\
+-   No router is required\
+-   If DHCP for the laptop is preferred, a modified version of the
+    script can be used
+
+------------------------------------------------------------------------
+
+## Tested On
+
+-   Raspberry Pi 5\
+-   Raspberry Pi OS (Bookworm / Trixie)\
+-   NetworkManager-based configuration
