@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# pi-static-link.sh (Bookworm / Pi 5)
-# Creates a persistent, no-internet Wi-Fi link:
-#  - "ap" role: Pi #1 becomes a WPA2 AP with STATIC IP 192.168.50.1/24 (no DHCP)
-#  - "client" role: Pi #2 joins that AP with STATIC IP 192.168.50.2/24
-#  - SSH enabled on both
+# pi-static-link-robust.sh
+# Robust configuration for:
+#  - "ap" role: static AP 192.168.50.1/24 (no DHCP)
+#  - "client" role: static client 192.168.50.2/24
 #
-# IMPORTANT: With no DHCP, your laptop must use a manual IP like 192.168.50.10/24
-# (or use the DHCP variant later).
+# Usage:
+#   sudo SSID=Pi-Network PSK='MyPassw0rd' ./pi-static-link-robust.sh ap
+#   sudo SSID=Pi-Network PSK='MyPassw0rd' ./pi-static-link-robust.sh client
 
-# ========= USER CONFIG (override via env vars) =========
+# ---------------- User-configurable (override via env) ----------------
 SSID="${SSID:-Pi-Network}"
 PSK="${PSK:-StrongPasswordHere}"
-IFACE="${IFACE:-wlan0}"
-
+# IFACE can be overridden; if empty script will detect the wifi iface
+IFACE="${IFACE:-}"
 AP_IP_CIDR="${AP_IP_CIDR:-192.168.50.1/24}"
 CLIENT_IP_CIDR="${CLIENT_IP_CIDR:-192.168.50.2/24}"
 AP_GW="${AP_GW:-192.168.50.1}"
-
 AP_CON="${AP_CON:-pi-ap}"
 CLIENT_CON="${CLIENT_CON:-pi-client}"
-# =======================================================
+# ---------------------------------------------------------------------
 
-die() { echo "ERROR: $*" >&2; exit 1; }
+die(){ echo "ERROR: $*" >&2; exit 1; }
+info(){ echo "INFO: $*"; }
 
-need_root() {
-  [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo $0 ap|client"
-}
+need_root(){ [[ $EUID -eq 0 ]] || die "Run with sudo"; }
 
-have_cmd() { command -v "$1" >/dev/null 2>&1; }
+have_cmd(){ command -v "$1" >/dev/null 2>&1; }
 
-install_pkgs() {
+install_pkgs(){
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y network-manager openssh-server
@@ -39,18 +37,49 @@ install_pkgs() {
   systemctl enable --now ssh
 }
 
-wait_nm() {
-  for _ in {1..30}; do
+wait_nm(){
+  for i in {1..30}; do
     if nmcli -t -f RUNNING general status 2>/dev/null | grep -qx running; then
       return 0
     fi
     sleep 0.5
   done
-  die "NetworkManager is not running."
+  die "NetworkManager failed to start."
 }
 
-disable_wifi_powersave() {
-  # Helps Wi-Fi stability on some setups
+detect_wifi_iface(){
+  if [[ -n "$IFACE" ]]; then
+    echo "$IFACE"
+    return
+  fi
+  # prefer nmcli-discovered wifi devices (TYPE=wifi)
+  IFACE_DETECTED="$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')"
+  if [[ -n "$IFACE_DETECTED" ]]; then
+    echo "$IFACE_DETECTED"
+    return
+  fi
+  # fallback to 'wlan0' if present in ip link
+  if ip link show wlan0 >/dev/null 2>&1; then
+    echo "wlan0"
+    return
+  fi
+  die "Could not detect a Wi-Fi interface. Set IFACE explicitly (e.g. IFACE=wlp1s0)."
+}
+
+ensure_iface_up(){
+  local iface="$1"
+  # unblock if rfkill blocked
+  rfkill list wifi 2>/dev/null | grep -qi 'Soft blocked: yes' && rfkill unblock wifi || true
+  ip link set "$iface" up || true
+  sleep 0.5
+}
+
+delete_con_if_exists(){
+  local name="$1"
+  nmcli -t -f NAME con show | grep -Fxq "$name" && nmcli connection delete "$name" >/dev/null 2>&1 || true
+}
+
+disable_wifi_powersave(){
   mkdir -p /etc/NetworkManager/conf.d
   cat >/etc/NetworkManager/conf.d/wifi-powersave.conf <<'EOF'
 [connection]
@@ -60,119 +89,118 @@ EOF
   wait_nm
 }
 
-validate_config() {
-  [[ -n "$SSID" ]] || die "SSID is empty"
-  [[ -n "$PSK" ]] || die "PSK is empty"
-  [[ ${#PSK} -ge 8 ]] || die "PSK must be at least 8 characters"
-  [[ -n "$IFACE" ]] || die "IFACE is empty"
-  [[ -n "$AP_IP_CIDR" ]] || die "AP_IP_CIDR is empty (e.g. 192.168.50.1/24)"
-  [[ -n "$CLIENT_IP_CIDR" ]] || die "CLIENT_IP_CIDR is empty (e.g. 192.168.50.2/24)"
-  [[ -n "$AP_GW" ]] || die "AP_GW is empty (e.g. 192.168.50.1)"
+ensure_ssh_and_firewall(){
+  systemctl enable --now ssh || true
+  if have_cmd ufw; then
+    if ufw status | grep -qi inactive; then
+      # do not enable ufw; just allow ssh if ufw is active later
+      true
+    else
+      ufw allow ssh || true
+    fi
+  fi
 }
 
-ensure_iface_exists() {
-  nmcli -t -f DEVICE device status | cut -d: -f1 | grep -Fxq "$IFACE" || {
-    echo "Known devices:"
-    nmcli device status || true
-    die "Interface '$IFACE' not found."
-  }
-}
-
-delete_con_if_exists() {
-  local name="$1"
-  nmcli -t -f NAME con show | grep -Fxq "$name" && nmcli con delete "$name" >/dev/null
-}
-
-configure_ap() {
-  echo "==> Configuring AP on $IFACE (static $AP_IP_CIDR) ..."
+# Create AP safely (address + method in one step) and disable WPS, ap-isolation
+configure_ap(){
+  local iface="$1"
+  info "Creating AP connection '$AP_CON' on interface $iface with $AP_IP_CIDR"
   delete_con_if_exists "$AP_CON"
 
-  # Create connection with address + manual method IN ONE STEP (prevents the 'manual requires address' error)
-  nmcli con add type wifi ifname "$IFACE" con-name "$AP_CON" ssid "$SSID" \
+  nmcli connection add type wifi ifname "$iface" con-name "$AP_CON" ssid "$SSID" \
     ipv4.method manual ipv4.addresses "$AP_IP_CIDR" ipv6.method ignore connection.autoconnect yes
 
-  # AP mode + security
-  nmcli con modify "$AP_CON" 802-11-wireless.mode ap
-  nmcli con modify "$AP_CON" 802-11-wireless.band bg
-  nmcli con modify "$AP_CON" 802-11-wireless.channel 6
-  nmcli con modify "$AP_CON" wifi-sec.key-mgmt wpa-psk
-  nmcli con modify "$AP_CON" wifi-sec.psk "$PSK"
+  nmcli connection modify "$AP_CON" 802-11-wireless.mode ap
+  nmcli connection modify "$AP_CON" 802-11-wireless.band bg
+  nmcli connection modify "$AP_CON" 802-11-wireless.channel 6
 
-  # Ensure no gateway/DNS set (pure local)
-  nmcli con modify "$AP_CON" ipv4.gateway ""
-  nmcli con modify "$AP_CON" ipv4.dns ""
-  nmcli con modify "$AP_CON" ipv4.never-default yes
+  # security: WPA2-PSK only, disable WPS
+  nmcli connection modify "$AP_CON" wifi-sec.key-mgmt wpa-psk
+  nmcli connection modify "$AP_CON" wifi-sec.psk "$PSK"
 
-  nmcli con up "$AP_CON"
+  # ensure pure local network
+  nmcli connection modify "$AP_CON" ipv4.gateway ""
+  nmcli connection modify "$AP_CON" ipv4.dns ""
+  nmcli connection modify "$AP_CON" ipv4.never-default yes
 
-  echo ""
-  echo "✅ AP READY"
-  echo "  SSID: $SSID"
-  echo "  IP:   ${AP_IP_CIDR%/*}"
-  echo "  CON:  $AP_CON"
-  echo ""
-  echo "Next:"
-  echo "  - On Pi #2: sudo SSID='$SSID' PSK='$PSK' $0 client"
-  echo "  - On laptop: connect to '$SSID' and set manual IP 192.168.50.10/24"
-  echo "SSH:"
-  echo "  ssh pi@${AP_IP_CIDR%/*}"
-  echo ""
+  # explicitly turn off AP isolation (allow client<->client)
+  # two possible keys for different NM versions:
+  nmcli connection modify "$AP_CON" 802-11-wireless.ap-isolation no 2>/dev/null || true
+  nmcli connection modify "$AP_CON" wifi-sec.wps-method disabled 2>/dev/null || true
+  nmcli connection modify "$AP_CON" 802-11-wireless-security.wps-method disabled 2>/dev/null || true
+
+  nmcli connection up "$AP_CON" || die "Failed to bring up AP connection '$AP_CON'"
+
+  # verify IP present on iface
+  for i in {1..8}; do
+    ip -4 addr show dev "$iface" | grep -q "${AP_IP_CIDR%/*}" && break || sleep 0.5
+    if [[ $i -eq 8 ]]; then
+      die "AP is up but the interface $iface does not have the IP ${AP_IP_CIDR%/*}."
+    fi
+  done
+
+  info "AP created & active. SSID=$SSID IP=${AP_IP_CIDR%/*}"
 }
 
-configure_client() {
-  echo "==> Configuring CLIENT on $IFACE (static $CLIENT_IP_CIDR) ..."
+# Create client profile with static IP and ensure it connects
+configure_client(){
+  local iface="$1"
+  info "Creating client connection '$CLIENT_CON' on interface $iface with $CLIENT_IP_CIDR"
   delete_con_if_exists "$CLIENT_CON"
 
-  nmcli dev wifi rescan || true
-
-  # Create the client profile explicitly (more reliable than renaming auto-created profiles)
-  nmcli con add type wifi ifname "$IFACE" con-name "$CLIENT_CON" ssid "$SSID" \
+  # create in one step (address + method), forcing WPA2-PSK
+  nmcli device wifi rescan || true
+  nmcli connection add type wifi ifname "$iface" con-name "$CLIENT_CON" ssid "$SSID" \
     wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PSK" \
     ipv4.method manual ipv4.addresses "$CLIENT_IP_CIDR" ipv4.gateway "$AP_GW" \
     ipv4.dns "" ipv4.never-default yes ipv6.method ignore connection.autoconnect yes
 
-  nmcli con up "$CLIENT_CON"
+  # bring it up and wait for ip
+  nmcli connection up "$CLIENT_CON" || true
 
-  echo ""
-  echo "✅ CLIENT READY"
-  echo "  IP:  ${CLIENT_IP_CIDR%/*}"
-  echo "  CON: $CLIENT_CON"
-  echo ""
-  echo "SSH (from laptop while connected to '$SSID'):"
-  echo "  ssh pi@${CLIENT_IP_CIDR%/*}"
-  echo ""
+  # retry activation up to several times (some drivers take a moment)
+  local tries=0
+  while :; do
+    ((tries++))
+    # check active on iface
+    ACTIVE=$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v d="$iface" '$2==d{print $1; exit}')
+    ADDR=$(nmcli -g ipv4.addresses connection show "$CLIENT_CON" 2>/dev/null || true)
+    if [[ -n "$ACTIVE" && -n "$ADDR" ]]; then
+      info "Client connected (CON=$ACTIVE IP=${ADDR%%/*})"
+      break
+    fi
+    if [[ $tries -ge 10 ]]; then
+      nmcli -f NAME,DEVICE,STATE connection show --active || true
+      ip -4 addr show dev "$iface" || true
+      die "Client failed to connect or get IP after multiple attempts. Last ACTIVE='$ACTIVE' ADDR='$ADDR'"
+    fi
+    sleep 1
+    nmcli connection up "$CLIENT_CON" >/dev/null 2>&1 || true
+  done
 }
 
-usage() {
-  cat <<EOF
-Usage:
-  sudo $0 ap
-  sudo $0 client
-
-Optional env overrides:
-  SSID=Pi-Network
-  PSK=StrongPasswordHere
-  IFACE=wlan0
-  AP_IP_CIDR=192.168.50.1/24
-  CLIENT_IP_CIDR=192.168.50.2/24
-  AP_GW=192.168.50.1
-EOF
-  exit 1
-}
-
-main() {
+main(){
   need_root
-  validate_config
   install_pkgs
   wait_nm
   disable_wifi_powersave
-  ensure_iface_exists
+  ensure_ssh_and_firewall
 
-  case "${1:-}" in
-    ap) configure_ap ;;
-    client) configure_client ;;
-    *) usage ;;
-  esac
+  local role="${1:-}"
+  [[ "$role" == "ap" || "$role" == "client" ]] || die "Usage: $0 ap|client"
+
+  local iface
+  iface="$(detect_wifi_iface)"
+  info "Using Wi-Fi interface: $iface"
+  ensure_iface_up "$iface"
+
+  if [[ "$role" == "ap" ]]; then
+    configure_ap "$iface"
+    info "AP ready. Try: ssh pi@${AP_IP_CIDR%/*}"
+  else
+    configure_client "$iface"
+    info "Client ready. Try: ssh pi@${CLIENT_IP_CIDR%/*}"
+  fi
 }
 
 main "$@"
