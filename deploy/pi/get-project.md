@@ -11,14 +11,14 @@ cd ~/CribGuard-Display
 Option B — Copy from your Windows machine via scp:
 
 ```powershell
-# In PowerShell on your PC, replace <pi-host> with your Pi's hostname or IP
-scp -r "C:\Users\johnh\School\CPE190\CribGuard-Display" pi@<pi-host>:/home/pi/CribGuard-Display
+# In PowerShell on your PC, replace <user> and <pi-host>
+scp -r "C:\Users\johnh\School\CPE190\CribGuard-Display" <user>@<pi-host>:/home/<user>/
 ```
 
 Then on the Pi:
 
 ```bash
-cd ~/CribGuard-Display
+cd /home/<user>/CribGuard-Display
 ```
 
 

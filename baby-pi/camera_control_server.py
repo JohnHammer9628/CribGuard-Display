@@ -13,6 +13,7 @@ import signal
 import os
 import logging
 import shutil
+import shlex
 
 app = Flask(__name__)
 CORS(app)  # Allow cross-origin requests from Parent Pi
@@ -30,6 +31,47 @@ parent_port = 5000
 LULLABIES_DIR = os.path.expanduser("~/Lullabies")
 os.makedirs(LULLABIES_DIR, exist_ok=True)
 
+# Camera backend selection:
+# - mlx90640 (default): ./mlx90640_streaming <parent_ip> <parent_port>
+# - lepton_usb / lepton3.5: ./lepton_streaming <parent_ip> <parent_port>
+# - custom: provide camera_stream_template
+camera_backend = os.environ.get("CG_CAMERA_BACKEND", "mlx90640").strip().lower()
+camera_stream_template = os.environ.get("CG_CAMERA_STREAM_CMD", "").strip()
+
+CAMERA_BACKEND_DEFAULT_TEMPLATES = {
+    "mlx90640": "./mlx90640_streaming {parent_ip} {parent_port}",
+    "lepton_usb": "./lepton_streaming {parent_ip} {parent_port}",
+    "lepton3.5": "./lepton_streaming {parent_ip} {parent_port}",
+}
+
+
+def resolve_stream_command(target_ip, target_port, backend_override=None, template_override=None):
+    """Resolve camera stream command into argv list."""
+    backend = (backend_override or camera_backend or "mlx90640").strip().lower()
+    template = (template_override or "").strip()
+
+    if not template:
+        if camera_stream_template:
+            template = camera_stream_template
+        else:
+            template = CAMERA_BACKEND_DEFAULT_TEMPLATES.get(
+                backend, "./mlx90640_streaming {parent_ip} {parent_port}"
+            )
+
+    rendered = template.format(parent_ip=target_ip, parent_port=target_port)
+    cmd = shlex.split(rendered)
+    if not cmd:
+        raise ValueError("camera stream command template resolved to empty command")
+    return backend, template, cmd
+
+
+def stream_executable_exists(cmd):
+    """Check whether command executable exists/is runnable."""
+    exe = cmd[0]
+    if os.path.isabs(exe) or exe.startswith("."):
+        return os.path.isfile(exe) and os.access(exe, os.X_OK)
+    return shutil.which(exe) is not None
+
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
@@ -41,8 +83,11 @@ def get_status():
     return jsonify({
         'streaming': is_streaming,
         'recording': (recording_process is not None and recording_process.poll() is None),
+        'playing': (playback_process is not None and playback_process.poll() is None),
         'parent_ip': parent_ip,
         'parent_port': parent_port,
+        'camera_backend': camera_backend,
+        'camera_stream_template': camera_stream_template or CAMERA_BACKEND_DEFAULT_TEMPLATES.get(camera_backend, ""),
         'pid': streaming_process.pid if is_streaming else None
     })
 
@@ -61,14 +106,30 @@ def start_camera():
     data = request.get_json() or {}
     target_ip = data.get('parent_ip', parent_ip)
     target_port = data.get('parent_port', parent_port)
+    req_backend = data.get('camera_backend')
+    req_template = data.get('camera_stream_template')
 
     # Update global config
     parent_ip = target_ip
     parent_port = target_port
 
-    # Start streaming process
     try:
-        cmd = ['./mlx90640_streaming', parent_ip, str(parent_port)]
+        backend, template, cmd = resolve_stream_command(
+            parent_ip,
+            parent_port,
+            backend_override=req_backend,
+            template_override=req_template
+        )
+
+        if not stream_executable_exists(cmd):
+            logger.error(f"Camera backend '{backend}' command not found/executable: {cmd[0]}")
+            return jsonify({
+                'success': False,
+                'error': f"stream command not found or not executable: {cmd[0]}",
+                'camera_backend': backend,
+                'camera_stream_template': template
+            }), 500
+
         logger.info(f"Starting camera stream: {' '.join(cmd)}")
 
         streaming_process = subprocess.Popen(
@@ -83,7 +144,10 @@ def start_camera():
             'success': True,
             'pid': streaming_process.pid,
             'parent_ip': parent_ip,
-            'parent_port': parent_port
+            'parent_port': parent_port,
+            'camera_backend': backend,
+            'camera_stream_template': template,
+            'stream_cmd': cmd
         })
 
     except Exception as e:
@@ -315,7 +379,7 @@ def rename_lullaby():
 @app.route('/api/config', methods=['POST'])
 def update_config():
     """Update configuration (parent IP/port)"""
-    global parent_ip, parent_port
+    global parent_ip, parent_port, camera_backend, camera_stream_template
 
     data = request.get_json() or {}
 
@@ -327,10 +391,20 @@ def update_config():
         parent_port = int(data['parent_port'])
         logger.info(f"Updated parent_port to {parent_port}")
 
+    if 'camera_backend' in data:
+        camera_backend = str(data['camera_backend']).strip().lower()
+        logger.info(f"Updated camera_backend to {camera_backend}")
+
+    if 'camera_stream_template' in data:
+        camera_stream_template = str(data['camera_stream_template']).strip()
+        logger.info(f"Updated camera_stream_template to: {camera_stream_template}")
+
     return jsonify({
         'success': True,
         'parent_ip': parent_ip,
-        'parent_port': parent_port
+        'parent_port': parent_port,
+        'camera_backend': camera_backend,
+        'camera_stream_template': camera_stream_template or CAMERA_BACKEND_DEFAULT_TEMPLATES.get(camera_backend, "")
     })
 
 

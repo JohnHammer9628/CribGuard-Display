@@ -18,6 +18,8 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -50,6 +52,14 @@ static void ensure_gst_init() {
         gst_init(&argc, &argv);
         log_line("[GST] init (lazy)");
     });
+}
+
+// Check whether a specific decoder element is available from the local registry.
+static bool gst_has_element(const char* element_name) {
+    GstElementFactory* factory = gst_element_factory_find(element_name);
+    if (!factory) return false;
+    gst_object_unref(factory);
+    return true;
 }
 
 // Log helper for GStreamer-related messages.
@@ -93,22 +103,68 @@ static gboolean gst_bus_callback(GstBus* /*bus*/, GstMessage* msg, gpointer /*da
 }
 
 // ---------- Appsink → LVGL bridge ----------
-static std::vector<uint8_t> g_cam_pixels;
-static int g_cam_w = 0, g_cam_h = 0;
+// Stage buffer is written by GStreamer thread.
+static std::vector<uint8_t> g_cam_pixels_stage;
+static int g_cam_w_stage = 0, g_cam_h_stage = 0;
+// UI buffer is consumed by LVGL on the main thread only.
+static std::vector<uint8_t> g_cam_pixels_ui;
+static int g_cam_w_ui = 0, g_cam_h_ui = 0;
+static std::mutex g_cam_frame_mtx;
+static std::atomic<bool> g_frame_update_pending{false};
 static lv_image_dsc_t g_cam_dsc{};
+static std::atomic<bool> g_logged_first_frame{false};
 
 // Declared in UI globals (in the UI layer)
 extern lv_obj_t* g_cam_img;
+extern lv_obj_t* g_cam_stats_label;
 
 // LVGL async callback that installs the latest frame into the UI image widget.
 static void ui_set_frame_cb(void*) {
-  if (!g_cam_img || g_cam_w <= 0 || g_cam_h <= 0 || g_cam_pixels.empty()) return;
+  struct PendingResetGuard {
+    ~PendingResetGuard() {
+      g_frame_update_pending.store(false, std::memory_order_release);
+    }
+  } reset_guard;
+
+  if (!g_cam_img) return;
+
+  {
+    std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
+    if (g_cam_w_stage <= 0 || g_cam_h_stage <= 0 || g_cam_pixels_stage.empty()) return;
+    g_cam_w_ui = g_cam_w_stage;
+    g_cam_h_ui = g_cam_h_stage;
+    g_cam_pixels_ui = g_cam_pixels_stage;
+  }
+
+  if (g_cam_w_ui <= 0 || g_cam_h_ui <= 0 || g_cam_pixels_ui.empty()) return;
+
   g_cam_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
-  g_cam_dsc.header.w = g_cam_w;
-  g_cam_dsc.header.h = g_cam_h;
-  g_cam_dsc.data = g_cam_pixels.data();
-  g_cam_dsc.data_size = g_cam_pixels.size();
+  g_cam_dsc.header.w = g_cam_w_ui;
+  g_cam_dsc.header.h = g_cam_h_ui;
+  g_cam_dsc.data = g_cam_pixels_ui.data();
+  g_cam_dsc.data_size = g_cam_pixels_ui.size();
   lv_image_set_src(g_cam_img, &g_cam_dsc);
+
+  static uint32_t s_win_start_ms = 0;
+  static uint32_t s_frame_count = 0;
+  static float s_fps_smoothed = 0.0f;
+
+  const uint32_t now_ms = lv_tick_get();
+  if (s_win_start_ms == 0) s_win_start_ms = now_ms;
+  s_frame_count++;
+
+  const uint32_t elapsed_ms = now_ms - s_win_start_ms;
+  if (elapsed_ms >= 1000) {
+    const float fps = (1000.0f * static_cast<float>(s_frame_count)) / static_cast<float>(elapsed_ms);
+    s_fps_smoothed = (s_fps_smoothed <= 0.0f) ? fps : (0.7f * s_fps_smoothed + 0.3f * fps);
+    s_win_start_ms = now_ms;
+    s_frame_count = 0;
+  }
+
+  if (g_cam_stats_label) {
+    lv_label_set_text_fmt(g_cam_stats_label, "%dx%d  %.1f fps", g_cam_w_ui, g_cam_h_ui, s_fps_smoothed);
+  }
+
 }
 
 // Appsink callback: pulls newest frame and schedules UI update.
@@ -117,18 +173,52 @@ static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer /*user_data*/) {
   if (!sample) return GST_FLOW_OK;
 
   GstCaps* caps = gst_sample_get_caps(sample);
+  if (!caps) {
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+  }
   const GstStructure* s = gst_caps_get_structure(caps, 0);
-  int w = 0, h = 0; gst_structure_get_int(s, "width", &w); gst_structure_get_int(s, "height", &h);
+  if (!s) {
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+  }
+  int w = 0, h = 0;
+  gst_structure_get_int(s, "width", &w);
+  gst_structure_get_int(s, "height", &h);
+  if (w <= 0 || h <= 0) {
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+  }
 
   GstBuffer* buf = gst_sample_get_buffer(sample);
+  if (!buf) {
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+  }
   GstMapInfo map;
   if (gst_buffer_map(buf, &map, GST_MAP_READ)) {
-    g_cam_w = w; g_cam_h = h;
-    g_cam_pixels.resize(static_cast<size_t>(w) * h * 4);
-    std::memcpy(g_cam_pixels.data(), map.data,
-                std::min(g_cam_pixels.size(), static_cast<size_t>(map.size)));
+    const size_t expected_size = static_cast<size_t>(w) * static_cast<size_t>(h) * 4U;
+    {
+      std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
+      g_cam_w_stage = w;
+      g_cam_h_stage = h;
+      g_cam_pixels_stage.resize(expected_size);
+      std::fill(g_cam_pixels_stage.begin(), g_cam_pixels_stage.end(), 0);
+      std::memcpy(g_cam_pixels_stage.data(), map.data,
+                  std::min(g_cam_pixels_stage.size(), static_cast<size_t>(map.size)));
+    }
     gst_buffer_unmap(buf, &map);
-    lv_async_call(ui_set_frame_cb, nullptr);
+
+    if (!g_logged_first_frame.exchange(true, std::memory_order_acq_rel)) {
+      log_line((std::string("[GST] first frame received: ") + std::to_string(w) + "x" + std::to_string(h) +
+               " bytes=" + std::to_string(static_cast<unsigned long long>(map.size))).c_str());
+    }
+
+    if (!g_frame_update_pending.exchange(true, std::memory_order_acq_rel)) {
+      if (lv_async_call(ui_set_frame_cb, nullptr) != LV_RESULT_OK) {
+        g_frame_update_pending.store(false, std::memory_order_release);
+      }
+    }
   }
   gst_sample_unref(sample);
   return GST_FLOW_OK;
@@ -142,6 +232,11 @@ void start_gstreamer_receiver() {
         return;
     }
 
+    if (!gst_has_element("avdec_h264")) {
+        log_line("[GST] ERROR: required decoder 'avdec_h264' is missing. Install: sudo apt install -y gstreamer1.0-libav");
+        return;
+    }
+
     // Build pipeline string
     std::string pipeline_str =
         "udpsrc port=" + std::to_string(g_camera_stream_port) +
@@ -149,7 +244,7 @@ void start_gstreamer_receiver() {
         "rtph264depay ! h264parse ! "
         "avdec_h264 ! "
         "videoconvert ! "
-        "video/x-raw,format=RGBA ! "
+        "video/x-raw,format=BGRA ! "
         "appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true";
 
     log_line((std::string("[GST] creating pipeline: ") + pipeline_str).c_str());
@@ -159,6 +254,9 @@ void start_gstreamer_receiver() {
 
     if (error) {
         log_line((std::string("[GST] ERROR: ") + error->message).c_str());
+        if (std::string(error->message).find("avdec_h264") != std::string::npos) {
+            log_line("[GST] HINT: install software H264 decoder: sudo apt install -y gstreamer1.0-libav");
+        }
         g_error_free(error);
         return;
     }
@@ -240,13 +338,40 @@ void stop_gstreamer_receiver() {
         g_gst_pipeline = nullptr;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
+        g_cam_pixels_stage.clear();
+        g_cam_pixels_ui.clear();
+        g_cam_w_stage = 0;
+        g_cam_h_stage = 0;
+        g_cam_w_ui = 0;
+        g_cam_h_ui = 0;
+    }
+    g_frame_update_pending.store(false, std::memory_order_release);
+    g_logged_first_frame.store(false, std::memory_order_release);
+
     log_line("[GST] receiver stopped");
+}
+
+void log_gstreamer_support_status() {
+    ensure_gst_init();
+    log_line("[GST] support: compiled=yes");
+
+    if (gst_has_element("avdec_h264")) {
+        log_line("[GST] decoder: avdec_h264 available");
+    } else {
+        log_line("[GST] WARNING: decoder avdec_h264 not found. Install: sudo apt install -y gstreamer1.0-libav");
+    }
 }
 
 #else  // CG_HAVE_GSTREAMER
 
 void start_gstreamer_receiver() { log_line("[GST] unavailable (headers not found)"); }
 void stop_gstreamer_receiver() { log_line("[GST] unavailable (headers not found)"); }
+void log_gstreamer_support_status() {
+    log_line("[GST] support: compiled=no (headers missing at build time)");
+    log_line("[GST] HINT: install libgstreamer dev packages and rebuild if camera RX is required");
+}
 
 #endif
 

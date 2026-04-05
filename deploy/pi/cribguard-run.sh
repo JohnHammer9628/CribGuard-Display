@@ -1,25 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Launch CribGuard UI on Raspberry Pi OS Lite using SDL KMS/DRM.
-# Copy this to /usr/local/bin/cribguard-run.sh and chmod +x it.
+# Launch CribGuard UI on Raspberry Pi OS Bookworm (Pi 5) using SDL KMS/DRM.
+#
+# Runtime overrides (from systemd EnvironmentFile or shell):
+# - CRIBGUARD_USER               user account that owns the repo
+# - CRIBGUARD_HOME               home directory for CRIBGUARD_USER
+# - CRIBGUARD_REPO_DIR           repository root (default: <home>/CribGuard-Display)
+# - CRIBGUARD_BUILD_DIR          build dir (default: <repo>/build-pi)
+# - SDL_VIDEODRIVER              default kmsdrm
+# - SDL_AUDIODRIVER              default alsa
+# - SDL_VIDEO_KMSDRM_ROTATION    default 90 (landscape on official 7" DSI)
 
-APP_DIR="/home/pi/CribGuard-Display"
-BIN="${APP_DIR}/build-pi/crib_guard_pi"
+RUN_USER="${CRIBGUARD_USER:-$(id -un)}"
+if [[ -z "${CRIBGUARD_HOME:-}" ]]; then
+  CRIBGUARD_HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6 || true)"
+fi
+if [[ -z "${CRIBGUARD_HOME:-}" ]]; then
+  CRIBGUARD_HOME="${HOME:-/home/${RUN_USER}}"
+fi
 
-cd "${APP_DIR}"
+REPO_DIR="${CRIBGUARD_REPO_DIR:-${CRIBGUARD_HOME}/CribGuard-Display}"
+BUILD_DIR="${CRIBGUARD_BUILD_DIR:-${REPO_DIR}/build-pi}"
+BIN="${CRIBGUARD_BIN:-${BUILD_DIR}/crib_guard_pi}"
+LOG_FILE="${CRIBGUARD_LOG_FILE:-${REPO_DIR}/sim.log}"
 
-export SDL_VIDEODRIVER=kmsdrm
-# Use ALSA for audio in future streaming/audio work
-export SDL_AUDIODRIVER=alsa
+if [[ ! -x "${BIN}" ]]; then
+  echo "[CribGuard] binary not found: ${BIN}" >&2
+  echo "[CribGuard] build first (cmake --preset pi5-rel && cmake --build --preset pi5-rel)" >&2
+  exit 1
+fi
 
-# If the panel is mounted portrait but you want landscape, uncomment one:
-# export SDL_VIDEO_KMSDRM_ROTATION=90
-# export SDL_VIDEO_KMSDRM_ROTATION=270
+mkdir -p "$(dirname "${LOG_FILE}")"
+cd "${REPO_DIR}"
 
-# Keep the console from suspending mid-demo (best-effort, harmless if unavailable)
-echo 0 | sudo tee /sys/devices/platform/vconsole/console_suspend >/dev/null 2>&1 || true
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
+export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-alsa}"
+export SDL_VIDEO_KMSDRM_ROTATION="${SDL_VIDEO_KMSDRM_ROTATION:-90}"
 
-exec "${BIN}" >> "${APP_DIR}/sim.log" 2>&1
+if [[ -w /sys/devices/platform/vconsole/console_suspend ]]; then
+  echo 0 > /sys/devices/platform/vconsole/console_suspend || true
+fi
 
+exec "${BIN}" >> "${LOG_FILE}" 2>&1
 

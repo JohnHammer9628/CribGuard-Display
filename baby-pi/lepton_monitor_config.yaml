@@ -1,0 +1,54 @@
+%YAML:1.0
+
+capture:
+  vendor_id: 0x1e4e
+  product_id: 0x0100
+  request_width: 160
+  request_height: 120
+  telemetry_rows: 0
+  telemetry_bottom: 1
+  fps: 9
+  frame_timeout_ms: 1400
+  reopen_backoff_ms: 700
+  max_reopen_attempts: 8
+  strict_native_160x120: 1
+  max_same_signature_frames: 72
+
+stream:
+  enable_rtp: 1
+  enable_raw_zmq: 1
+  parent_ip: "10.0.0.98"
+  rtp_port: 5000
+  zmq_endpoint: "tcp://*:5557"
+  out_width: 640
+  out_height: 480
+  bitrate_kbps: 900
+  colormap: "inferno"
+  temp_min_c: 26.0
+  temp_max_c: 38.0
+
+detection:
+  crib_x: 0
+  crib_y: 0
+  crib_w: 160
+  crib_h: 120
+  wet_y_frac_start: 0.45
+  min_baby_area: 1700
+  warm_delta_c: 1.2
+  head_top_frac: 0.35
+  hottest_frac: 0.15
+  temp_smooth_alpha: 0.12
+  baseline_alpha: 0.01
+  baseline_motion_freeze_delta: 0.75
+  baseline_ambient_jump_freeze_delta: 1.2
+  wet_cold_delta: -1.0
+  wet_warm_delta: 1.0
+  wet_enter_area: 900
+  wet_exit_area: 620
+  wet_persist_sec: 6.0
+
+runtime:
+  headless: 1
+  preview: 0
+  events_file: "~/crib_monitor_events.jsonl"
+  status_every_n_frames: 45

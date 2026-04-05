@@ -11,12 +11,24 @@
         "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
+    },
+    {
+      "name": "pi5-rel",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-pi",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "win-rel",
       "configurePreset": "win-rel"
+    },
+    {
+      "name": "pi5-rel",
+      "configurePreset": "pi5-rel"
     }
   ]
 }

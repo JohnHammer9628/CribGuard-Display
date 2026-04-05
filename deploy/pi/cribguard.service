@@ -1,13 +1,16 @@
 [Unit]
+# Install this unit as: /etc/systemd/system/cribguard@.service
+# Enable with user instance: sudo systemctl enable --now cribguard@<user>.service
 Description=CribGuard UI (LVGL/SDL KMS/DRM)
-After=multi-user.target
+After=multi-user.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/CribGuard-Display
-Environment=SDL_VIDEODRIVER=kmsdrm
+User=%i
+Group=%i
+Environment=CRIBGUARD_USER=%i
+EnvironmentFile=-/etc/default/cribguard
 ExecStart=/usr/local/bin/cribguard-run.sh
 Restart=always
 RestartSec=2

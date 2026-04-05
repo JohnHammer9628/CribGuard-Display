@@ -119,6 +119,49 @@ void handle_shutdown_signal(int /*sig*/) {
 	g_quit = true;
 }
 
+// Log startup diagnostics that are useful when bringing up Pi 5 kiosk mode.
+static void log_startup_diagnostics(int req_w, int req_h) {
+    char buf[256];
+    const char* env_driver = std::getenv("SDL_VIDEODRIVER");
+    const char* env_rotate = std::getenv("SDL_VIDEO_KMSDRM_ROTATION");
+    std::snprintf(buf, sizeof(buf),
+        "[SIM] env SDL_VIDEODRIVER=%s SDL_VIDEO_KMSDRM_ROTATION=%s",
+        env_driver ? env_driver : "(unset)",
+        env_rotate ? env_rotate : "(unset)");
+    log_line(buf);
+
+    std::snprintf(buf, sizeof(buf), "[SIM] requested render size=%dx%d", req_w, req_h);
+    log_line(buf);
+
+#if HAVE_SDL2_HEADER
+    const char* active_driver = SDL_GetCurrentVideoDriver();
+    std::snprintf(buf, sizeof(buf), "[SIM] SDL active video driver=%s",
+        active_driver ? active_driver : "(null)");
+    log_line(buf);
+
+    int displays = SDL_GetNumVideoDisplays();
+    if (displays < 0) {
+        std::snprintf(buf, sizeof(buf), "[SIM] WARNING: SDL_GetNumVideoDisplays failed: %s", SDL_GetError());
+        log_line(buf);
+        return;
+    }
+
+    std::snprintf(buf, sizeof(buf), "[SIM] SDL display count=%d", displays);
+    log_line(buf);
+
+    SDL_DisplayMode mode{};
+    if (SDL_GetCurrentDisplayMode(0, &mode) == 0) {
+        std::snprintf(buf, sizeof(buf), "[SIM] SDL display0 mode=%dx%d@%dHz", mode.w, mode.h, mode.refresh_rate);
+        log_line(buf);
+    } else {
+        std::snprintf(buf, sizeof(buf), "[SIM] WARNING: SDL_GetCurrentDisplayMode(0) failed: %s", SDL_GetError());
+        log_line(buf);
+    }
+#else
+    log_line("[SIM] SDL diagnostics unavailable (SDL headers not detected)");
+#endif
+}
+
 // Simulator entrypoint:
 // - open log file
 // - load config (settings.cfg)
@@ -149,6 +192,9 @@ int main(int /*argc*/, char** /*argv*/) {
       std::snprintf(buf, sizeof(buf), "[SIM] SDL window created %dx%d", SCR_W, SCR_H);
       log_line(buf);
   }
+
+    log_startup_diagnostics(SCR_W, SCR_H);
+    log_gstreamer_support_status();
 
     // Install signal handlers so UI exits cleanly on gpio-shutdown (power button) or Ctrl+C
     std::signal(SIGINT,  handle_shutdown_signal);
@@ -198,4 +244,3 @@ int main(int /*argc*/, char** /*argv*/) {
     if (g_log_file) std::fclose(g_log_file);
     return 0;
 }
-

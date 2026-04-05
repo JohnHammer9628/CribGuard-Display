@@ -1,81 +1,24 @@
 CribGuard Display — LVGL v9 + SDL2 Simulator (Windows)
 
-## TL;DR — Quick Start (Raspberry Pi)
+## TL;DR — Quick Start (Raspberry Pi 5, Bookworm 64-bit)
 
-Pick ONE path and paste these blocks over SSH. Replace `<user>` and `<IP>` where shown. If your user is `jammin`, use that.
+Kiosk mode is the primary target on Pi 5 + official 7" DSI.
 
-### Option 1: Desktop (shows over Pi homescreen) — easiest
-Terminal: Raspberry Pi (SSH)
-```bash
-# On the Pi (SSH)
-sudo apt update && sudo apt install -y git cmake build-essential ninja-build libsdl2-dev
-sudo usermod -aG video,input $USER && sudo reboot
-```
 Terminal: Windows PowerShell (on your PC — any folder)
 ```powershell
-# From your PC (PowerShell) — copy the project to the Pi
+# Copy project to Pi (replace <user> and <IP>)
 scp -r "C:\Users\johnh\School\CPE190\CribGuard-Display" <user>@<IP>:/home/<user>/
 ```
+
 Terminal: Raspberry Pi (SSH)
 ```bash
-# Back on the Pi (SSH)
-cmake -S /home/<user>/CribGuard-Display -B /home/<user>/CribGuard-Display/build-pi -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build /home/<user>/CribGuard-Display/build-pi -j"$(nproc)"
-
-# Make it auto-start on Desktop login
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard-run.sh /usr/local/bin/cribguard-run.sh
-sudo sed -i 's|/home/pi|/home/<user>|g' /usr/local/bin/cribguard-run.sh
-sudo sed -i '/^export SDL_VIDEODRIVER=/d;/^export SDL_VIDEO_KMSDRM_ROTATION=/d' /usr/local/bin/cribguard-run.sh
-echo 'unset SDL_VIDEODRIVER' | sudo tee -a /usr/local/bin/cribguard-run.sh
-echo 'export DISPLAY=:0'      | sudo tee -a /usr/local/bin/cribguard-run.sh
-sudo chmod +x /usr/local/bin/cribguard-run.sh
-
-mkdir -p /home/<user>/.config/autostart
-cat > /home/<user>/.config/autostart/cribguard.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=CribGuard
-Exec=/usr/local/bin/cribguard-run.sh
-X-GNOME-Autostart-enabled=true
-EOF
-chown <user>:<user> /home/<user>/.config/autostart/cribguard.desktop
-sudo reboot
+cd /home/<user>/CribGuard-Display
+bash deploy/pi/install-kiosk.sh
 ```
 
-### Option 2: Kiosk (no Desktop) — most robust for demos
-Terminal: Raspberry Pi (SSH)
-```bash
-# On the Pi (SSH)
-sudo apt update && sudo apt install -y git cmake build-essential ninja-build libsdl2-dev
-sudo usermod -aG video,input $USER && sudo reboot
-```
-Terminal: Windows PowerShell (on your PC — any folder)
-```powershell
-# From your PC (PowerShell) — copy the project to the Pi
-scp -r "C:\Users\johnh\School\CPE190\CribGuard-Display" <user>@<IP>:/home/<user>/
-```
-Terminal: Raspberry Pi (SSH)
-```bash
-# Back on the Pi (SSH)
-cmake -S /home/<user>/CribGuard-Display -B /home/<user>/CribGuard-Display/build-pi -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build /home/<user>/CribGuard-Display/build-pi -j"$(nproc)"
-
-# Install launcher
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard-run.sh /usr/local/bin/cribguard-run.sh
-sudo sed -i 's|/home/pi|/home/<user>|g' /usr/local/bin/cribguard-run.sh
-sudo sed -i '/^export DISPLAY=/d;/^unset SDL_VIDEODRIVER/d' /usr/local/bin/cribguard-run.sh
-echo 'export SDL_VIDEODRIVER=kmsdrm'       | sudo tee -a /usr/local/bin/cribguard-run.sh
-echo 'export SDL_VIDEO_KMSDRM_ROTATION=90' | sudo tee -a /usr/local/bin/cribguard-run.sh
-sudo chmod +x /usr/local/bin/cribguard-run.sh
-
-# Install service
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard.service /etc/systemd/system/cribguard.service
-sudo sed -i 's|/home/pi|/home/<user>|g' /etc/systemd/system/cribguard.service
-sudo sed -i 's/^User=.*/User=<user>/'    /etc/systemd/system/cribguard.service
-sudo sed -i 's/^Group=.*/Group=<user>/'  /etc/systemd/system/cribguard.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now cribguard.service
-```
+After install:
+- Service: `sudo systemctl status cribguard@<user>.service`
+- Logs: `journalctl -u cribguard@<user>.service -b -f`
 
 
 
@@ -182,7 +125,7 @@ scp -r "C:\Users\johnh\School\CPE190\CribGuard-Display" <user>@<IP>:/home/<user>
 4) On the Pi, install packages (one line)
 Terminal: Raspberry Pi (SSH)
 ```bash
-sudo apt update && sudo apt install -y git cmake build-essential ninja-build libsdl2-dev
+sudo apt update && sudo apt install -y git cmake build-essential ninja-build pkg-config libsdl2-dev libcurl4-openssl-dev gstreamer1.0-tools gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-gl gstreamer1.0-libav libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 ```
 
 5) On the Pi, allow display/touch groups and reboot
@@ -195,8 +138,9 @@ sudo reboot
 6) On the Pi (after reboot), configure and build
 Terminal: Raspberry Pi (SSH)
 ```bash
-cmake -S /home/<user>/CribGuard-Display -B /home/<user>/CribGuard-Display/build-pi -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build /home/<user>/CribGuard-Display/build-pi -j"$(nproc)"
+cd /home/<user>/CribGuard-Display
+cmake --preset pi5-rel
+cmake --build --preset pi5-rel -j"$(nproc)"
 ```
 
 7) Test run (should open on the homescreen)
@@ -208,23 +152,17 @@ DISPLAY=:0 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi
 8) Make it auto‑start on login (Desktop autostart)
 Terminal: Raspberry Pi (SSH)
 ```bash
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard-run.sh /usr/local/bin/cribguard-run.sh
-sudo sed -i 's|/home/pi|/home/<user>|g' /usr/local/bin/cribguard-run.sh
-sudo sed -i '/^export SDL_VIDEODRIVER=/d;/^export SDL_VIDEO_KMSDRM_ROTATION=/d' /usr/local/bin/cribguard-run.sh
-echo 'unset SDL_VIDEODRIVER' | sudo tee -a /usr/local/bin/cribguard-run.sh
-echo 'export DISPLAY=:0'      | sudo tee -a /usr/local/bin/cribguard-run.sh
-sudo chmod +x /usr/local/bin/cribguard-run.sh
+mkdir -p /home/<user>/.config/autostart
 ```
 
 9) Create the autostart entry
 Terminal: Raspberry Pi (SSH)
 ```bash
-mkdir -p /home/<user>/.config/autostart
 cat > /home/<user>/.config/autostart/cribguard.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=CribGuard
-Exec=/usr/local/bin/cribguard-run.sh
+Exec=env DISPLAY=:0 SDL_VIDEODRIVER=x11 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi
 X-GNOME-Autostart-enabled=true
 EOF
 chown <user>:<user> /home/<user>/.config/autostart/cribguard.desktop
@@ -247,7 +185,7 @@ DISPLAY=:0 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi
 tail -n 100 /home/<user>/CribGuard-Display/sim.log
 ```
 
-12) Switch to Kiosk later (most robust demo) — see “Raspberry Pi 4 + 7" Touch — E) Run (Kiosk mode)” above.
+12) Switch to Kiosk later (most robust demo) — see “Raspberry Pi 5 + 7" Touch — E) Run (Kiosk mode)” below.
 
 ## Common tasks (cheat sheet)
 
@@ -272,7 +210,7 @@ Get-Content .\sim.log -Tail 100 -Wait
 - Missing SDL2.dll: copy from `build-win/SDL2.dll` to `build-win-vcpkg/`.
 - “Compiler not found”: load MSVC env with `VsDevCmd.bat` as shown in Build & Run.
 
-## Raspberry Pi 4 + 7" Touch (Bookworm) — end‑to‑end
+## Raspberry Pi 5 + 7" Touch (Bookworm 64-bit) — end‑to‑end
 
 This project uses LVGL v9 with the SDL backend. You can run the UI on a Raspberry Pi either:
 
@@ -280,19 +218,18 @@ This project uses LVGL v9 with the SDL backend. You can run the UI on a Raspberr
 - As a Kiosk service with KMS/DRM (no Desktop needed; most robust for demos)
 
 The code already:
-- Auto-detects the active display mode and normalizes to landscape (falls back to 1280×720)
-- Uses fullscreen by default (`config/lv_conf.h`: `LV_SDL_FULLSCREEN=1`)
-- Disables LVGL’s ASM-optimized paths to ensure stable builds on Pi
+- Logs startup diagnostics for SDL driver/display mode and GStreamer support
+- Defaults to KMS/DRM kiosk mode with landscape rotation (`SDL_VIDEO_KMSDRM_ROTATION=90`)
+- Uses LVGL software draw fallback (ASM disabled) for stable Pi builds
 
 ### A) One-time OS packages (Pi)
 Terminal: Raspberry Pi (SSH)
 
 ```bash
 sudo apt update
-sudo apt install -y git cmake build-essential ninja-build libsdl2-dev
-# Optional now; useful later for camera/audio streaming work:
-sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-gl
-# Some images don’t have libav/ffmpeg packages; that’s OK to skip.
+sudo apt install -y git cmake build-essential ninja-build pkg-config libsdl2-dev libcurl4-openssl-dev
+sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-gl gstreamer1.0-libav
+sudo apt install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 sudo usermod -aG video,input $USER
 sudo reboot
 ```
@@ -314,8 +251,8 @@ Or clone your repo directly on the Pi into `/home/<user>/CribGuard-Display`.
 Terminal: Raspberry Pi (SSH)
 
 ```bash
-cmake -S /home/<user>/CribGuard-Display -B /home/<user>/CribGuard-Display/build-pi -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build /home/<user>/CribGuard-Display/build-pi -j"$(nproc)"
+cmake --preset pi5-rel
+cmake --build --preset pi5-rel -j"$(nproc)"
 ```
 
 If the network blocks CMake’s `FetchContent` for LVGL:
@@ -353,19 +290,12 @@ Auto-start on user login (recommended for beginners):
 Terminal: Raspberry Pi (SSH)
 
 ```bash
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard-run.sh /usr/local/bin/cribguard-run.sh
-sudo sed -i 's|/home/pi|/home/<user>|g' /usr/local/bin/cribguard-run.sh
-sudo sed -i '/^export SDL_VIDEODRIVER=/d;/^export SDL_VIDEO_KMSDRM_ROTATION=/d' /usr/local/bin/cribguard-run.sh
-echo 'unset SDL_VIDEODRIVER' | sudo tee -a /usr/local/bin/cribguard-run.sh
-echo 'export DISPLAY=:0'      | sudo tee -a /usr/local/bin/cribguard-run.sh
-sudo chmod +x /usr/local/bin/cribguard-run.sh
-
 mkdir -p /home/<user>/.config/autostart
 cat > /home/<user>/.config/autostart/cribguard.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=CribGuard
-Exec=/usr/local/bin/cribguard-run.sh
+Exec=env DISPLAY=:0 SDL_VIDEODRIVER=x11 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi
 X-GNOME-Autostart-enabled=true
 EOF
 chown <user>:<user> /home/<user>/.config/autostart/cribguard.desktop
@@ -384,20 +314,16 @@ Use this when you want the most robust, fast-boot experience (e.g., power‑bank
 
 Terminal: Raspberry Pi (SSH)
 ```bash
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard-run.sh /usr/local/bin/cribguard-run.sh
-sudo sed -i 's|/home/pi|/home/<user>|g' /usr/local/bin/cribguard-run.sh
-sudo sed -i '/^export DISPLAY=/d;/^unset SDL_VIDEODRIVER/d' /usr/local/bin/cribguard-run.sh
-echo 'export SDL_VIDEODRIVER=kmsdrm'       | sudo tee -a /usr/local/bin/cribguard-run.sh
-# Touch Display 2 is portrait by default; rotate to landscape if needed:
-echo 'export SDL_VIDEO_KMSDRM_ROTATION=90' | sudo tee -a /usr/local/bin/cribguard-run.sh
-sudo chmod +x /usr/local/bin/cribguard-run.sh
+cd /home/<user>/CribGuard-Display
+bash deploy/pi/install-kiosk.sh
+```
 
-sudo cp /home/<user>/CribGuard-Display/deploy/pi/cribguard.service /etc/systemd/system/cribguard.service
-sudo sed -i 's|/home/pi|/home/<user>|g' /etc/systemd/system/cribguard.service
-sudo sed -i 's/^User=.*/User=<user>/'    /etc/systemd/system/cribguard.service
-sudo sed -i 's/^Group=.*/Group=<user>/'  /etc/systemd/system/cribguard.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now cribguard.service
+Optional overrides before install:
+
+```bash
+export SDL_VIDEO_KMSDRM_ROTATION=90
+export CRIBGUARD_REPO_DIR=/home/<user>/CribGuard-Display
+bash deploy/pi/install-kiosk.sh
 ```
 
 Optional: prevent console blanking on Lite
@@ -418,35 +344,32 @@ sudo reboot
 
 ### F) SSH control (so you don’t need a Pi keyboard)
 
-- Stop service: `sudo systemctl stop cribguard.service`
-- Start service: `sudo systemctl start cribguard.service`
-- Disable/enable autostart: `sudo systemctl disable|enable cribguard.service`
-- Live logs: `journalctl -u cribguard.service -b -f`
+- Stop service: `sudo systemctl stop cribguard@<user>.service`
+- Start service: `sudo systemctl start cribguard@<user>.service`
+- Disable/enable autostart: `sudo systemctl disable|enable cribguard@<user>.service`
+- Live logs: `journalctl -u cribguard@<user>.service -b -f`
 - Manual Desktop run: `DISPLAY=:0 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi`
 - Manual KMS/DRM run: `SDL_VIDEODRIVER=kmsdrm SDL_VIDEO_KMSDRM_ROTATION=90 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi`
 
 ### G) Switching quickly between Desktop and Kiosk
 
 - To Desktop autostart:
-  - `sudo systemctl disable --now cribguard.service`
-  - Edit `/usr/local/bin/cribguard-run.sh` to have:
-    - `unset SDL_VIDEODRIVER`
-    - `export DISPLAY=:0`
-  - Create `~/.config/autostart/cribguard.desktop` as shown above and reboot.
+  - `sudo systemctl disable --now cribguard@<user>.service`
+  - Create `~/.config/autostart/cribguard.desktop` with:
+    - `Exec=env DISPLAY=:0 SDL_VIDEODRIVER=x11 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi`
+  - Reboot.
 
 - To Kiosk service:
   - `rm -f ~/.config/autostart/cribguard.desktop`
-  - Edit `/usr/local/bin/cribguard-run.sh` to have:
-    - `export SDL_VIDEODRIVER=kmsdrm`
-    - `export SDL_VIDEO_KMSDRM_ROTATION=90` (if needed)
-  - `sudo systemctl enable --now cribguard.service`
+  - Run installer again if needed: `bash deploy/pi/install-kiosk.sh`
+  - `sudo systemctl enable --now cribguard@<user>.service`
 
 ### H) Power off / reboot the Pi safely
 
 Terminal: Raspberry Pi (SSH)
 ```bash
 # Stop UI first (choose the one you use)
-sudo systemctl stop cribguard.service  # if using Kiosk/service
+sudo systemctl stop cribguard@<user>.service  # if using Kiosk/service
 pkill -f crib_guard_pi                 # if you started it manually on Desktop
 
 # Safe shutdown (wait for screen off / LED activity to stop, then unplug)
@@ -504,7 +427,7 @@ DISPLAY=:0 /home/<user>/CribGuard-Display/build-pi/crib_guard_pi
 Terminal: Raspberry Pi (SSH)
 ```bash
 cmake --build /home/<user>/CribGuard-Display/build-pi -j"$(nproc)"
-sudo systemctl restart cribguard.service
+sudo systemctl restart cribguard@<user>.service
 ```
 
 5) Logs (find issues fast)
@@ -513,7 +436,7 @@ Terminal: Raspberry Pi (SSH)
 # App log on Pi
 tail -n 100 /home/<user>/CribGuard-Display/sim.log
 # Service logs on Pi (Kiosk)
-journalctl -u cribguard.service -b -f
+journalctl -u cribguard@<user>.service -b -f
 ```
 
 6) Assets
@@ -544,3 +467,36 @@ Contributions welcome. Please open issues or pull requests for bug fixes, improv
 ## License
 
 See `LICENSE` (if present) or add your preferred license.
+
+## Native Lepton 3.5 Monitor Service (C++)
+
+This repo now includes a native service target for PureThermal + Lepton 3.5:
+
+- Source: `baby-pi/lepton_monitor_service.cpp`
+- Config: `baby-pi/lepton_monitor_config.yaml`
+- Target: `lepton_monitor_service` (Linux only, requires OpenCV + libuvc + libzmq + GStreamer)
+
+Build on Baby Pi:
+
+```bash
+cd /home/<user>/CribGuard-Display
+cmake --preset pi5-rel
+cmake --build --preset pi5-rel -j"$(nproc)" --target lepton_monitor_service
+```
+
+Run headless (default):
+
+```bash
+/home/<user>/CribGuard-Display/build-pi/lepton_monitor_service --config /home/<user>/CribGuard-Display/baby-pi/lepton_monitor_config.yaml --headless
+```
+
+Run with local preview for tuning:
+
+```bash
+DISPLAY=:0 /home/<user>/CribGuard-Display/build-pi/lepton_monitor_service --config /home/<user>/CribGuard-Display/baby-pi/lepton_monitor_config.yaml --preview
+```
+
+CLI overrides:
+
+- `--parent-ip <ip>` and `--rtp-port <port>` for RTP destination.
+- `--zmq-endpoint <tcp://*:port>` for raw Y16 frame PUB endpoint.

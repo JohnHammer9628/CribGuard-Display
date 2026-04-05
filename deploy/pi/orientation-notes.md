@@ -1,4 +1,4 @@
-# Screen Orientation Options (Raspberry Pi OS Bookworm KMS/DRM)
+# Screen Orientation Options (Raspberry Pi 5 + Bookworm KMS/DRM)
 
 ## Quick (SDL-only)
 

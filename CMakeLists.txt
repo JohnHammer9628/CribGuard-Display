@@ -32,6 +32,14 @@ else()
   message(WARNING "pkg-config not found - skipping GStreamer detection")
 endif()
 
+# ---- OpenCV (optional, for thermal processing/streaming service) ----
+find_package(OpenCV QUIET COMPONENTS core imgproc highgui videoio)
+if (OpenCV_FOUND)
+  message(STATUS "OpenCV found: ${OpenCV_VERSION}")
+else()
+  message(WARNING "OpenCV not found - native lepton monitor target may be disabled")
+endif()
+
 # ---- libcurl (optional, for HTTP API calls) ----
 find_package(CURL)
 if (CURL_FOUND)
@@ -180,3 +188,61 @@ endif()
 set_target_properties(crib_guard_pi PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# ---- Native Lepton monitor service (Linux, optional deps) ----
+if (PKG_CONFIG_FOUND)
+  pkg_check_modules(LIBUVC QUIET IMPORTED_TARGET libuvc)
+  pkg_check_modules(LIBZMQ QUIET IMPORTED_TARGET libzmq)
+endif()
+
+option(BUILD_LEPTON_MONITOR "Build native Lepton monitor service (libuvc + OpenCV + ZeroMQ)" ON)
+
+if (BUILD_LEPTON_MONITOR)
+  if (UNIX AND OpenCV_FOUND AND LIBUVC_FOUND AND LIBZMQ_FOUND AND GSTREAMER_FOUND)
+    add_executable(lepton_monitor_service
+      baby-pi/lepton_monitor_service.cpp
+    )
+
+    target_include_directories(lepton_monitor_service PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${OpenCV_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(lepton_monitor_service PRIVATE
+      ${OpenCV_LIBS}
+      PkgConfig::LIBUVC
+      PkgConfig::LIBZMQ
+      ${GSTREAMER_LIBRARIES}
+      ${GSTREAMER_BASE_LIBRARIES}
+      ${GSTREAMER_APP_LIBRARIES}
+    )
+
+    target_include_directories(lepton_monitor_service PRIVATE
+      ${GSTREAMER_INCLUDE_DIRS}
+      ${GSTREAMER_BASE_INCLUDE_DIRS}
+      ${GSTREAMER_APP_INCLUDE_DIRS}
+    )
+
+    target_link_directories(lepton_monitor_service PRIVATE
+      ${GSTREAMER_LIBRARY_DIRS}
+      ${GSTREAMER_BASE_LIBRARY_DIRS}
+      ${GSTREAMER_APP_LIBRARY_DIRS}
+    )
+
+    if (MSVC)
+      target_compile_options(lepton_monitor_service PRIVATE /W3 /permissive-)
+    else()
+      target_compile_options(lepton_monitor_service PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+
+    set_target_properties(lepton_monitor_service PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+
+    message(STATUS "Native Lepton monitor target enabled: lepton_monitor_service")
+  else()
+    message(WARNING
+      "Skipping lepton_monitor_service. Requirements: UNIX + OpenCV + libuvc + libzmq + gstreamer-1.0"
+    )
+  endif()
+endif()

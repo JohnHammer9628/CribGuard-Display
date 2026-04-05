@@ -20,6 +20,7 @@
 
 // Global (not namespaced) for `src/camera_rx_gst.cpp` compatibility.
 lv_obj_t* g_cam_img = nullptr;
+lv_obj_t* g_cam_stats_label = nullptr;
 
 namespace cg::ui {
 
@@ -81,6 +82,7 @@ static void close_camera() {
         g_cam_spinner = nullptr;
         g_cam_live_label = nullptr;
         g_cam_meta_label = nullptr;
+        g_cam_stats_label = nullptr;
         g_cam_btn_full = nullptr;
         g_cam_sw_mute = nullptr;
         g_cam_fullscreen = false;
@@ -256,14 +258,21 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_clear_flag(g_camera_surface, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(g_camera_surface, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_grow(g_camera_surface, 1);
+    // embedded image target for frames
+    g_cam_img = lv_image_create(g_camera_surface);
+    lv_obj_set_size(g_cam_img, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(g_cam_img);
+    lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_STRETCH);
     // LIVE/IDLE label (simple text, no chip)
     g_cam_live_label = lv_label_create(g_camera_surface);
     lv_obj_set_style_text_color(g_cam_live_label, lv_color_white(), 0);
     lv_label_set_text(g_cam_live_label, "IDLE");
     lv_obj_align(g_cam_live_label, LV_ALIGN_TOP_LEFT, 12, 12);
-    // embedded image target for frames
-    g_cam_img = lv_image_create(g_camera_surface);
-    lv_obj_center(g_cam_img);
+    // Stream stats (resolution/fps), updated from camera_rx_gst.cpp
+    g_cam_stats_label = lv_label_create(g_camera_surface);
+    lv_obj_set_style_text_color(g_cam_stats_label, theme::text_subtle(), 0);
+    lv_label_set_text(g_cam_stats_label, "No stream");
+    lv_obj_align(g_cam_stats_label, LV_ALIGN_TOP_RIGHT, -12, 12);
     // spinner
     g_cam_spinner = lv_spinner_create(g_camera_surface);
     lv_spinner_set_anim_params(g_cam_spinner, 1000, 60);
@@ -329,4 +338,3 @@ void build_camera_dialog(lv_obj_t* parent) {
 }
 
 } // namespace cg::ui
-

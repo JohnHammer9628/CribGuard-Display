@@ -16,3 +16,19 @@ if(!(Test-Path $vc)){$vc="C:\Program Files (x86)\Microsoft Visual Studio\2022\Bu
 
 If you see `The system cannot find the path specified`, the run path is wrong. The exe is emitted to `build-win\crib_guard_pi.exe`.
 If you see `LNK1181: cannot open input file 'winmm.lib'`, install the Windows 10/11 SDK in Visual Studio Build Tools and re-run the commands.
+
+## Raspberry Pi 5 (Bookworm 64-bit + 7" DSI) - One-command Kiosk Install
+
+Terminal: Raspberry Pi (SSH)
+
+```bash
+cd /home/<user>/CribGuard-Display
+bash deploy/pi/install-kiosk.sh
+```
+
+Service and logs:
+
+```bash
+sudo systemctl status cribguard@<user>.service
+journalctl -u cribguard@<user>.service -b -f
+```
