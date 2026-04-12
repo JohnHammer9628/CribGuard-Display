@@ -2,7 +2,7 @@
 //
 // Parent Pi camera receiver (GStreamer).
 //
-// Receives the Baby Pi's H264-over-RTP UDP stream and converts frames into RGBA.
+// Receives the Baby Pi's H264-over-RTP UDP stream and converts frames into BGRx.
 // The latest frame is copied into a buffer and pushed to the UI via `lv_async_call`.
 //
 // Build behavior:
@@ -146,16 +146,25 @@ void poll_gstreamer_frame() {
     if (g_cam_w_stage <= 0 || g_cam_h_stage <= 0 || g_cam_pixels_stage.empty()) return;
     g_cam_w_ui = g_cam_w_stage;
     g_cam_h_ui = g_cam_h_stage;
-    g_cam_pixels_ui = g_cam_pixels_stage;
+    const size_t expected = static_cast<size_t>(g_cam_w_ui) * static_cast<size_t>(g_cam_h_ui) * 4U;
+    if (g_cam_pixels_ui.size() != expected) g_cam_pixels_ui.resize(expected);
+    std::memcpy(g_cam_pixels_ui.data(), g_cam_pixels_stage.data(),
+                std::min(g_cam_pixels_ui.size(), g_cam_pixels_stage.size()));
   }
 
   if (g_cam_w_ui <= 0 || g_cam_h_ui <= 0 || g_cam_pixels_ui.empty()) return;
 
-  g_cam_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+  g_cam_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+  g_cam_dsc.header.cf = LV_COLOR_FORMAT_XRGB8888;
+  g_cam_dsc.header.flags = 0;
   g_cam_dsc.header.w = g_cam_w_ui;
   g_cam_dsc.header.h = g_cam_h_ui;
+  g_cam_dsc.header.stride = static_cast<uint16_t>(g_cam_w_ui * 4U);
+  g_cam_dsc.header.reserved_2 = 0;
   g_cam_dsc.data = g_cam_pixels_ui.data();
   g_cam_dsc.data_size = g_cam_pixels_ui.size();
+  g_cam_dsc.reserved = nullptr;
+  lv_image_cache_drop(&g_cam_dsc);
   lv_image_set_src(g_cam_img, &g_cam_dsc);
   lv_obj_invalidate(g_cam_img);
 
@@ -168,21 +177,10 @@ void poll_gstreamer_frame() {
       log_line("[GST] poll: spinner deleted");
     }
     lv_obj_clear_flag(g_cam_img, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(g_cam_img);
-
-    // DEBUG: fill with solid red to verify rendering works
-    for (size_t i = 0; i < g_cam_pixels_ui.size(); i += 4) {
-      g_cam_pixels_ui[i + 0] = 0;     // B
-      g_cam_pixels_ui[i + 1] = 0;     // G
-      g_cam_pixels_ui[i + 2] = 255;   // R
-      g_cam_pixels_ui[i + 3] = 255;   // A
-    }
-    g_cam_dsc.data = g_cam_pixels_ui.data();
-    lv_image_set_src(g_cam_img, &g_cam_dsc);
-    lv_obj_invalidate(g_cam_img);
+    lv_obj_move_background(g_cam_img);
 
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame FORCED RED %dx%d size=%u",
+    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame bound %dx%d size=%u",
                   g_cam_w_ui, g_cam_h_ui, (unsigned)g_cam_pixels_ui.size());
     log_line(buf);
   }
@@ -282,7 +280,7 @@ void start_gstreamer_receiver() {
         "rtph264depay ! h264parse ! "
         "avdec_h264 ! "
         "videoconvert ! "
-        "video/x-raw,format=BGRA ! "
+        "video/x-raw,format=BGRx ! "
         "appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true";
 
     log_line((std::string("[GST] creating pipeline: ") + pipeline_str).c_str());

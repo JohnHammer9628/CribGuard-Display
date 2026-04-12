@@ -79,6 +79,7 @@ static void close_camera() {
         g_camera_modal = nullptr;
         g_camera_surface = nullptr;
         g_camera_sheet = nullptr;
+        g_cam_img = nullptr;
         g_cam_spinner = nullptr;
         g_cam_live_label = nullptr;
         g_cam_meta_label = nullptr;
@@ -262,6 +263,7 @@ void build_camera_dialog(lv_obj_t* parent) {
     g_cam_img = lv_image_create(g_camera_surface);
     lv_obj_set_size(g_cam_img, LV_PCT(100), LV_PCT(100));
     lv_obj_center(g_cam_img);
+    lv_obj_set_style_image_opa(g_cam_img, LV_OPA_COVER, LV_PART_MAIN);
     lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_STRETCH);
     // LIVE/IDLE label (simple text, no chip)
     g_cam_live_label = lv_label_create(g_camera_surface);
