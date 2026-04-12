@@ -153,7 +153,7 @@ void poll_gstreamer_frame() {
     }
 
     // Copy pixel data into the draw buffer (row by row to respect stride)
-    uint8_t* dst = lv_draw_buf_get_buf(g_cam_draw_buf);
+    uint8_t* dst = g_cam_draw_buf->data;
     uint32_t dst_stride = g_cam_draw_buf->header.stride;
     uint32_t src_stride = static_cast<uint32_t>(new_w) * 4U;
     for (int y = 0; y < new_h; y++) {
