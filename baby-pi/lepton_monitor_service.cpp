@@ -632,21 +632,27 @@ void colorize(const cv::Mat& temp_c, double lo, double hi, int cmap, cv::Mat& bg
 }
 
 void text(cv::Mat& img, const std::string& s, cv::Point p, cv::Scalar c) {
-    cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
-    cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, 0.5, c, 1, cv::LINE_AA);
+    constexpr double kScale = 0.34;  // Keep overlay readable but unobtrusive on 640x480.
+    cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, kScale, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
+    cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, kScale, c, 1, cv::LINE_AA);
 }
 
 void drawPreview(cv::Mat& img, const DetectOut& d, bool recovering) {
     cv::rectangle(img, d.crib, cv::Scalar(255, 255, 255), 1);
     cv::line(img, cv::Point(d.crib.x, d.wet_y), cv::Point(d.crib.x + d.crib.width - 1, d.wet_y), cv::Scalar(200, 200, 200), 1);
     if (d.has_baby) { cv::rectangle(img, d.baby, cv::Scalar(255, 255, 255), 1); cv::rectangle(img, d.head, cv::Scalar(180, 220, 255), 1); }
-    text(img, "Ambient " + std::to_string(d.ambient).substr(0, 4) + "C", cv::Point(8, 20), cv::Scalar(255, 255, 255));
+
+    const int x = 8;
+    const int y0 = 16;
+    const int lh = 14;
+
     std::string h = d.has_head ? (std::to_string(d.head_c).substr(0, 4) + "C") : "n/a";
-    text(img, "Head " + h, cv::Point(8, 42), cv::Scalar(255, 255, 255));
+    text(img, "Amb " + std::to_string(d.ambient).substr(0, 4) + "C  Head " + h, cv::Point(x, y0), cv::Scalar(255, 255, 255));
     cv::Scalar sc = d.state == WetState::None ? cv::Scalar(120, 255, 120) : (d.state == WetState::Cold ? cv::Scalar(255, 220, 90) : cv::Scalar(100, 180, 255));
-    text(img, "Wet " + std::string(wetName(d.state)) + " area " + std::to_string(d.cold_area) + "/" + std::to_string(d.warm_area), cv::Point(8, 64), sc);
-    text(img, d.baseline_frozen ? "Baseline frozen" : "Baseline adaptive", cv::Point(8, 86), d.baseline_frozen ? cv::Scalar(130, 220, 255) : cv::Scalar(130, 255, 130));
-    if (recovering) text(img, "CAPTURE RECOVERY", cv::Point(8, 108), cv::Scalar(60, 60, 255));
+    text(img, "Wet " + std::string(wetName(d.state)) + "  C/W " + std::to_string(d.cold_area) + "/" + std::to_string(d.warm_area), cv::Point(x, y0 + lh), sc);
+    text(img, d.baseline_frozen ? "Baseline: frozen" : "Baseline: adaptive", cv::Point(x, y0 + (2 * lh)),
+         d.baseline_frozen ? cv::Scalar(130, 220, 255) : cv::Scalar(130, 255, 130));
+    if (recovering) text(img, "CAPTURE RECOVERY", cv::Point(x, y0 + (3 * lh)), cv::Scalar(60, 60, 255));
 }
 
 bool startWithRetry(UvcGrabber& g, const CaptureCfg& c) {
