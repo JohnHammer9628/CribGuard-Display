@@ -26,6 +26,7 @@ lv_obj_t* g_cam_spinner = nullptr;
 namespace cg::ui {
 
 static lv_obj_t* g_camera_modal = nullptr;
+static lv_obj_t* g_camera_prev_screen = nullptr;
 static lv_obj_t* g_camera_surface = nullptr;
 static lv_obj_t* g_camera_sheet = nullptr;
 static lv_obj_t* g_cam_live_label = nullptr;
@@ -108,6 +109,9 @@ static void exit_camera_rotation_mode() {
 // Close and destroy the camera modal; stops streaming if currently playing.
 static void close_camera() {
     if (g_camera_modal) {
+        lv_obj_t* camera_screen = g_camera_modal;
+        lv_obj_t* prev_screen = g_camera_prev_screen;
+
         // Stop streaming if active
         if (g_cam_playing) {
             baby_pi_stop_camera();
@@ -115,8 +119,16 @@ static void close_camera() {
         }
 
         cam_spinner_hide();
-        lv_obj_del(g_camera_modal);
+        exit_camera_rotation_mode();
+
+        // Restore the previous app screen before deleting the camera screen.
+        if (prev_screen) {
+            lv_screen_load(prev_screen);
+        }
+
+        lv_obj_del(camera_screen);
         g_camera_modal = nullptr;
+        g_camera_prev_screen = nullptr;
         g_camera_surface = nullptr;
         g_camera_sheet = nullptr;
         g_cam_img = nullptr;
@@ -127,7 +139,6 @@ static void close_camera() {
         g_cam_sw_mute = nullptr;
         g_cam_controls_row = nullptr;
         g_cam_playing = false;
-        exit_camera_rotation_mode();
         log_line("[UI] camera closed");
     }
 }
@@ -216,15 +227,15 @@ static void apply_camera_ui_state() {
 void build_camera_dialog(lv_obj_t* parent) {
     if (g_camera_modal) return;
 
+    g_camera_prev_screen = lv_screen_active();
     enter_camera_rotation_mode(parent);
 
-    // Full-screen camera mode container.
-    g_camera_modal = lv_obj_create(parent);
+    // Dedicated full-screen camera screen (not a popup overlay).
+    g_camera_modal = lv_obj_create(nullptr);
     lv_obj_remove_style_all(g_camera_modal);
-    lv_obj_set_size(g_camera_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_clear_flag(g_camera_modal, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(g_camera_modal, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(g_camera_modal, LV_OPA_COVER, 0);
-    lv_obj_add_flag(g_camera_modal, LV_OBJ_FLAG_CLICKABLE);
 
     // Camera "page" fills the entire display.
     lv_obj_t* sheet = lv_obj_create(g_camera_modal);
@@ -346,6 +357,7 @@ void build_camera_dialog(lv_obj_t* parent) {
 
     log_line("[UI] camera opened");
     apply_camera_ui_state();
+    lv_screen_load(g_camera_modal);
 }
 
 } // namespace cg::ui
