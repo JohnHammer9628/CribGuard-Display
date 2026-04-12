@@ -632,7 +632,7 @@ void colorize(const cv::Mat& temp_c, double lo, double hi, int cmap, cv::Mat& bg
 }
 
 void text(cv::Mat& img, const std::string& s, cv::Point p, cv::Scalar c) {
-    constexpr double kScale = 0.34;  // Keep overlay readable but unobtrusive on 640x480.
+    constexpr double kScale = 0.24;  // Keep overlay small on 640x480 stream.
     cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, kScale, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
     cv::putText(img, s, p, cv::FONT_HERSHEY_SIMPLEX, kScale, c, 1, cv::LINE_AA);
 }
@@ -643,8 +643,8 @@ void drawPreview(cv::Mat& img, const DetectOut& d, bool recovering) {
     if (d.has_baby) { cv::rectangle(img, d.baby, cv::Scalar(255, 255, 255), 1); cv::rectangle(img, d.head, cv::Scalar(180, 220, 255), 1); }
 
     const int x = 8;
-    const int y0 = 16;
-    const int lh = 14;
+    const int y0 = 12;
+    const int lh = 11;
 
     std::string h = d.has_head ? (std::to_string(d.head_c).substr(0, 4) + "C") : "n/a";
     text(img, "Amb " + std::to_string(d.ambient).substr(0, 4) + "C  Head " + h, cv::Point(x, y0), cv::Scalar(255, 255, 255));
