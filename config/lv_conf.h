@@ -8,7 +8,7 @@
  *******************/
 #define LV_CONF_INCLUDE_SIMPLE 1
 #define LV_COLOR_DEPTH        32
-#define LV_MEM_SIZE           (64U * 1024U)   /* Adjust if you need more */
+#define LV_MEM_SIZE           (16U * 1024U * 1024U)
 
 #define LV_TICK_CUSTOM        1
 #if LV_TICK_CUSTOM

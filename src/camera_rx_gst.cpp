@@ -277,7 +277,7 @@ void start_gstreamer_receiver() {
         "rtph264depay ! h264parse ! "
         "avdec_h264 ! "
         "videoconvert ! "
-        "video/x-raw,format=BGRA ! "
+        "video/x-raw,format=BGRx ! "
         "appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true";
 
     log_line((std::string("[GST] creating pipeline: ") + pipeline_str).c_str());
