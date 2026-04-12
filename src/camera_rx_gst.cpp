@@ -376,13 +376,10 @@ void stop_gstreamer_receiver() {
         g_cam_pixels_stage.clear();
         g_cam_w_stage = 0;
         g_cam_h_stage = 0;
-        g_cam_w_ui = 0;
-        g_cam_h_ui = 0;
     }
-    if (g_cam_draw_buf) {
-        lv_draw_buf_destroy(g_cam_draw_buf);
-        g_cam_draw_buf = nullptr;
-    }
+    // Do not destroy LVGL draw resources here; this function can be called from
+    // a worker thread. LVGL objects/resources must remain on the main/UI thread.
+    // The existing draw buffer is safely reused on the next stream start.
     g_frame_update_pending.store(false, std::memory_order_release);
     g_logged_first_frame.store(false, std::memory_order_release);
     g_first_frame_rendered = false;
@@ -412,4 +409,3 @@ void log_gstreamer_support_status() {
 }
 
 #endif
-
