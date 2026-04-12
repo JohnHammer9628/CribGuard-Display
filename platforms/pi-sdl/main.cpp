@@ -174,7 +174,18 @@ int main(int /*argc*/, char** /*argv*/) {
     load_config();
     
     lv_init();
-    log_line("[SIM] lv_init ok");
+    log_line(“[SIM] lv_init ok”);
+
+#if HAVE_SDL2_HEADER
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), “[SIM] ERROR: SDL_Init failed: %s”, SDL_GetError());
+        log_line(buf);
+        if (g_log_file) std::fclose(g_log_file);
+        return 1;
+    }
+    log_line(“[SIM] SDL_Init ok”);
+#endif
 
   // Fixed simulator window size (requested): always 1280x720.
   // This avoids the app “taking over” the full screen on some machines.
