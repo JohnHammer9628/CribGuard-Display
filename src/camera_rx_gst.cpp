@@ -124,7 +124,20 @@ void poll_gstreamer_frame() {
   if (!g_frame_update_pending.load(std::memory_order_acquire)) return;
   g_frame_update_pending.store(false, std::memory_order_release);
 
-  if (!g_cam_img) return;
+  static bool s_logged_poll = false;
+  if (!s_logged_poll) {
+    log_line("[GST] poll_gstreamer_frame: pending frame detected");
+    s_logged_poll = true;
+  }
+
+  if (!g_cam_img) {
+    static bool s_logged_no_img = false;
+    if (!s_logged_no_img) {
+      log_line("[GST] poll_gstreamer_frame: g_cam_img is null, skipping");
+      s_logged_no_img = true;
+    }
+    return;
+  }
 
   {
     std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
@@ -142,6 +155,16 @@ void poll_gstreamer_frame() {
   g_cam_dsc.data = g_cam_pixels_ui.data();
   g_cam_dsc.data_size = g_cam_pixels_ui.size();
   lv_image_set_src(g_cam_img, &g_cam_dsc);
+  lv_obj_invalidate(g_cam_img);
+
+  static bool s_logged_set = false;
+  if (!s_logged_set) {
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "[GST] poll: frame applied to widget %dx%d size=%u",
+                  g_cam_w_ui, g_cam_h_ui, (unsigned)g_cam_pixels_ui.size());
+    log_line(buf);
+    s_logged_set = true;
+  }
 
   static uint32_t s_win_start_ms = 0;
   static uint32_t s_frame_count = 0;
