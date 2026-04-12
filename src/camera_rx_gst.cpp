@@ -102,16 +102,15 @@ static gboolean gst_bus_callback(GstBus* /*bus*/, GstMessage* msg, gpointer /*da
     return TRUE;
 }
 
-// ---------- Appsink → LVGL bridge ----------
+// ---------- Appsink -> LVGL bridge ----------
 // Stage buffer is written by GStreamer thread.
 static std::vector<uint8_t> g_cam_pixels_stage;
 static int g_cam_w_stage = 0, g_cam_h_stage = 0;
 // UI buffer is consumed by LVGL on the main thread only.
-static std::vector<uint8_t> g_cam_pixels_ui;
 static int g_cam_w_ui = 0, g_cam_h_ui = 0;
 static std::mutex g_cam_frame_mtx;
 static std::atomic<bool> g_frame_update_pending{false};
-static lv_image_dsc_t g_cam_dsc{};
+static lv_draw_buf_t* g_cam_draw_buf = nullptr;
 static std::atomic<bool> g_logged_first_frame{false};
 static bool g_first_frame_rendered = false;
 
@@ -121,51 +120,51 @@ extern lv_obj_t* g_cam_stats_label;
 extern lv_obj_t* g_cam_spinner;
 
 // Poll from main loop: installs the latest frame into the UI image widget.
-// Called from the main thread (not GStreamer thread).
+// Uses lv_draw_buf_t with LV_IMAGE_FLAGS_MODIFIABLE so the SDL backend
+// re-uploads the texture each time the source is invalidated.
 void poll_gstreamer_frame() {
   if (!g_frame_update_pending.load(std::memory_order_acquire)) return;
   g_frame_update_pending.store(false, std::memory_order_release);
 
-  static bool s_logged_poll = false;
-  if (!s_logged_poll) {
-    log_line("[GST] poll_gstreamer_frame: pending frame detected");
-    s_logged_poll = true;
-  }
+  if (!g_cam_img) return;
 
-  if (!g_cam_img) {
-    static bool s_logged_no_img = false;
-    if (!s_logged_no_img) {
-      log_line("[GST] poll_gstreamer_frame: g_cam_img is null, skipping");
-      s_logged_no_img = true;
-    }
-    return;
-  }
-
+  int new_w, new_h;
   {
     std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
     if (g_cam_w_stage <= 0 || g_cam_h_stage <= 0 || g_cam_pixels_stage.empty()) return;
-    g_cam_w_ui = g_cam_w_stage;
-    g_cam_h_ui = g_cam_h_stage;
-    const size_t expected = static_cast<size_t>(g_cam_w_ui) * static_cast<size_t>(g_cam_h_ui) * 4U;
-    if (g_cam_pixels_ui.size() != expected) g_cam_pixels_ui.resize(expected);
-    std::memcpy(g_cam_pixels_ui.data(), g_cam_pixels_stage.data(),
-                std::min(g_cam_pixels_ui.size(), g_cam_pixels_stage.size()));
+    new_w = g_cam_w_stage;
+    new_h = g_cam_h_stage;
+
+    // (Re)create the draw buffer when dimensions change
+    if (!g_cam_draw_buf || g_cam_w_ui != new_w || g_cam_h_ui != new_h) {
+      if (g_cam_draw_buf) lv_draw_buf_destroy(g_cam_draw_buf);
+      g_cam_draw_buf = lv_draw_buf_create(new_w, new_h, LV_COLOR_FORMAT_ARGB8888, 0);
+      if (!g_cam_draw_buf) {
+        log_line("[GST] poll: ERROR lv_draw_buf_create failed");
+        return;
+      }
+      lv_draw_buf_set_flag(g_cam_draw_buf, LV_IMAGE_FLAGS_MODIFIABLE);
+      g_cam_w_ui = new_w;
+      g_cam_h_ui = new_h;
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "[GST] poll: draw_buf created %dx%d stride=%u",
+                    new_w, new_h, g_cam_draw_buf->header.stride);
+      log_line(buf);
+    }
+
+    // Copy pixel data into the draw buffer (row by row to respect stride)
+    uint8_t* dst = lv_draw_buf_get_buf(g_cam_draw_buf);
+    uint32_t dst_stride = g_cam_draw_buf->header.stride;
+    uint32_t src_stride = static_cast<uint32_t>(new_w) * 4U;
+    for (int y = 0; y < new_h; y++) {
+      std::memcpy(dst + y * dst_stride,
+                  g_cam_pixels_stage.data() + y * src_stride,
+                  src_stride);
+    }
   }
 
-  if (g_cam_w_ui <= 0 || g_cam_h_ui <= 0 || g_cam_pixels_ui.empty()) return;
-
-  g_cam_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-  g_cam_dsc.header.cf = LV_COLOR_FORMAT_XRGB8888;
-  g_cam_dsc.header.flags = 0;
-  g_cam_dsc.header.w = g_cam_w_ui;
-  g_cam_dsc.header.h = g_cam_h_ui;
-  g_cam_dsc.header.stride = static_cast<uint16_t>(g_cam_w_ui * 4U);
-  g_cam_dsc.header.reserved_2 = 0;
-  g_cam_dsc.data = g_cam_pixels_ui.data();
-  g_cam_dsc.data_size = g_cam_pixels_ui.size();
-  g_cam_dsc.reserved = nullptr;
-  lv_image_cache_drop(&g_cam_dsc);
-  lv_image_set_src(g_cam_img, &g_cam_dsc);
+  lv_draw_buf_invalidate_cache(g_cam_draw_buf, NULL);
+  lv_image_set_src(g_cam_img, g_cam_draw_buf);
   lv_obj_invalidate(g_cam_img);
 
   // Hide spinner and ensure image is visible once we have a real frame
@@ -174,14 +173,12 @@ void poll_gstreamer_frame() {
     if (g_cam_spinner) {
       lv_obj_del(g_cam_spinner);
       g_cam_spinner = nullptr;
-      log_line("[GST] poll: spinner deleted");
     }
     lv_obj_clear_flag(g_cam_img, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_background(g_cam_img);
 
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame bound %dx%d size=%u",
-                  g_cam_w_ui, g_cam_h_ui, (unsigned)g_cam_pixels_ui.size());
+    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame rendered %dx%d",
+                  g_cam_w_ui, g_cam_h_ui);
     log_line(buf);
   }
 
@@ -280,7 +277,7 @@ void start_gstreamer_receiver() {
         "rtph264depay ! h264parse ! "
         "avdec_h264 ! "
         "videoconvert ! "
-        "video/x-raw,format=BGRx ! "
+        "video/x-raw,format=BGRA ! "
         "appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true";
 
     log_line((std::string("[GST] creating pipeline: ") + pipeline_str).c_str());
@@ -377,11 +374,14 @@ void stop_gstreamer_receiver() {
     {
         std::lock_guard<std::mutex> lock(g_cam_frame_mtx);
         g_cam_pixels_stage.clear();
-        g_cam_pixels_ui.clear();
         g_cam_w_stage = 0;
         g_cam_h_stage = 0;
         g_cam_w_ui = 0;
         g_cam_h_ui = 0;
+    }
+    if (g_cam_draw_buf) {
+        lv_draw_buf_destroy(g_cam_draw_buf);
+        g_cam_draw_buf = nullptr;
     }
     g_frame_update_pending.store(false, std::memory_order_release);
     g_logged_first_frame.store(false, std::memory_order_release);
