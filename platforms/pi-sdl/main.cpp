@@ -187,10 +187,30 @@ int main(int /*argc*/, char** /*argv*/) {
     log_line("[SIM] SDL_Init ok");
 #endif
 
-  // Fixed simulator window size (requested): always 1280x720.
-  // This avoids the app "taking over" the full screen on some machines.
-  const int SCR_W = 1280;
-  const int SCR_H = 720;
+  // Display size: native panel is 720x1280 (portrait). For landscape kiosk
+  // mode we create a 720x1280 window and let LVGL's software rotation
+  // present the UI at 1280x720 landscape. On desktop/sim, use 1280x720 directly.
+  int SCR_W = 1280;
+  int SCR_H = 720;
+  bool use_sw_rotate = false;
+
+#if HAVE_SDL2_HEADER
+  {
+      SDL_DisplayMode dm;
+      if (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
+          char buf[128];
+          std::snprintf(buf, sizeof(buf), "[SIM] native display mode: %dx%d", dm.w, dm.h);
+          log_line(buf);
+          // Portrait panel (h > w): create window at native size, rotate via LVGL
+          if (dm.h > dm.w) {
+              SCR_W = dm.w;
+              SCR_H = dm.h;
+              use_sw_rotate = true;
+              log_line("[SIM] portrait panel detected, will use LVGL sw rotation for landscape");
+          }
+      }
+  }
+#endif
 
     lv_display_t* disp = lv_sdl_window_create(SCR_W, SCR_H);
     if (!disp) {
@@ -203,6 +223,11 @@ int main(int /*argc*/, char** /*argv*/) {
       std::snprintf(buf, sizeof(buf), "[SIM] SDL window created %dx%d", SCR_W, SCR_H);
       log_line(buf);
   }
+
+    if (use_sw_rotate) {
+        lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
+        log_line("[SIM] LVGL rotation set to 90 (landscape)");
+    }
 
     log_startup_diagnostics(SCR_W, SCR_H);
     log_gstreamer_support_status();
