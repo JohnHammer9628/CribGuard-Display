@@ -119,7 +119,6 @@ static void close_camera() {
         }
 
         cam_spinner_hide();
-        exit_camera_rotation_mode();
 
         // Restore the previous app screen before deleting the camera screen.
         if (prev_screen) {
@@ -228,7 +227,8 @@ void build_camera_dialog(lv_obj_t* parent) {
     if (g_camera_modal) return;
 
     g_camera_prev_screen = lv_screen_active();
-    enter_camera_rotation_mode(parent);
+    // Runtime LVGL rotation can glitch on this Wayland/KMS stack.
+    // Keep camera as a dedicated full-screen screen without rotating display.
 
     // Dedicated full-screen camera screen (not a popup overlay).
     g_camera_modal = lv_obj_create(nullptr);
