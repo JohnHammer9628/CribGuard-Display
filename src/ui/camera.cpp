@@ -43,7 +43,7 @@ static std::atomic<bool> g_cam_stop_worker_running{false};
 
 static void cam_spinner_hide();
 static void apply_camera_ui_state();
-static void request_camera_stop_async(const char* reason);
+static void request_baby_camera_stop_async(const char* reason);
 
 // Show the spinner immediately; optionally auto-hide after N milliseconds.
 static void cam_spinner_show(uint32_t auto_hide_ms) {
@@ -68,8 +68,10 @@ static void cam_spinner_hide() {
     if (g_cam_spinner_timer) { lv_timer_del(g_cam_spinner_timer); g_cam_spinner_timer = nullptr; }
 }
 
-// Stop camera stream and local receiver on a worker thread so UI events never block.
-static void request_camera_stop_async(const char* reason) {
+// Stop only the Baby Pi camera API call on a worker thread so UI events never block.
+// Note: stop_gstreamer_receiver() must stay on the main/UI thread because it
+// touches LVGL draw-buffer resources.
+static void request_baby_camera_stop_async(const char* reason) {
     bool expected = false;
     if (!g_cam_stop_worker_running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         log_line("[UI] camera stop already in progress");
@@ -79,9 +81,8 @@ static void request_camera_stop_async(const char* reason) {
 
     std::thread([]() {
         baby_pi_stop_camera();
-        stop_gstreamer_receiver();
         g_cam_stop_worker_running.store(false, std::memory_order_release);
-        log_line("[UI] camera stop worker done");
+        log_line("[UI] camera API stop worker done");
     }).detach();
 }
 
@@ -93,7 +94,8 @@ static void close_camera() {
 
         // Stop streaming if active
         if (g_cam_playing) {
-            request_camera_stop_async("[UI] camera close: stopping stream");
+            stop_gstreamer_receiver();
+            request_baby_camera_stop_async("[UI] camera close: stopping stream");
         }
 
         cam_spinner_hide();
@@ -145,22 +147,15 @@ static void on_cam_play(lv_event_t* /*e*/) {
     apply_camera_ui_state();
 }
 
-// Pause camera display (does not stop the stream).
-static void on_cam_pause(lv_event_t* /*e*/) {
-    g_cam_playing = false;
-    log_line("[UI] camera pause");
-    cam_spinner_hide();
-    // Note: This just pauses display, doesn't stop streaming
-    apply_camera_ui_state();
-}
-
 // Stop camera streaming + receiver and update UI state.
 static void on_cam_stop(lv_event_t* /*e*/) {
     g_cam_playing = false;
     log_line("[UI] camera stop requested");
     cam_spinner_hide();
 
-    request_camera_stop_async("[UI] camera stop: background worker");
+    // Keep local receiver stop on UI thread to avoid LVGL thread-safety issues.
+    stop_gstreamer_receiver();
+    request_baby_camera_stop_async("[UI] camera stop: background worker");
 
     apply_camera_ui_state();
 }
@@ -307,11 +302,6 @@ void build_camera_dialog(lv_obj_t* parent) {
     style_button_tonal_ex(btn_play, 6, theme::sp12, theme::sp8);
     set_centered_button_label(btn_play, LV_SYMBOL_PLAY " Play");
     lv_obj_add_event_cb(btn_play, on_cam_play, LV_EVENT_CLICKED, nullptr);
-
-    lv_obj_t* btn_pause = lv_btn_create(row_ctrls);
-    style_button_tonal_ex(btn_pause, 6, theme::sp12, theme::sp8);
-    set_centered_button_label(btn_pause, LV_SYMBOL_PAUSE " Pause");
-    lv_obj_add_event_cb(btn_pause, on_cam_pause, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* btn_stop = lv_btn_create(row_ctrls);
     style_button_tonal_ex(btn_stop, 6, theme::sp12, theme::sp8);
