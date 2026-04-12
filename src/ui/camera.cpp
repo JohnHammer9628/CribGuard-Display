@@ -30,11 +30,9 @@ static lv_obj_t* g_camera_surface = nullptr;
 static lv_obj_t* g_camera_sheet = nullptr;
 static lv_obj_t* g_cam_live_label = nullptr;
 static lv_obj_t* g_cam_meta_label = nullptr;
-static lv_obj_t* g_cam_btn_full = nullptr;
 static lv_obj_t* g_cam_sw_mute = nullptr;
 static lv_obj_t* g_cam_controls_row = nullptr;
 
-static bool g_cam_fullscreen = false;
 static bool g_cam_muted = false;
 static bool g_cam_playing = false;
 static bool g_cam_show_spinner = false;
@@ -85,20 +83,11 @@ static void close_camera() {
         g_cam_live_label = nullptr;
         g_cam_meta_label = nullptr;
         g_cam_stats_label = nullptr;
-        g_cam_btn_full = nullptr;
         g_cam_sw_mute = nullptr;
         g_cam_controls_row = nullptr;
-        g_cam_fullscreen = false;
         g_cam_playing = false;
         log_line("[UI] camera closed");
     }
-}
-
-// Toggle fullscreen mode for the camera sheet within the modal.
-static void on_cam_fullscreen(lv_event_t* /*e*/) {
-    g_cam_fullscreen = !g_cam_fullscreen;
-    log_line(g_cam_fullscreen ? "[UI] camera fullscreen on" : "[UI] camera fullscreen off");
-    apply_camera_ui_state();
 }
 
 // Placeholder snapshot handler (no-op for now).
@@ -154,13 +143,8 @@ static void on_cam_mute_toggle(lv_event_t* e) {
     apply_camera_ui_state();
 }
 
-// Apply UI state to widgets (labels, fullscreen sizing, mute toggle).
+// Apply UI state to widgets (labels, layout, mute toggle).
 static void apply_camera_ui_state() {
-    // Update fullscreen button label
-    if (g_cam_btn_full) {
-        lv_obj_t* lbl = lv_obj_get_child(g_cam_btn_full, 0);
-        if (lbl) lv_label_set_text(lbl, g_cam_fullscreen ? "Exit Fullscreen" : "Fullscreen");
-    }
     // Update mute switch visual state
     if (g_cam_sw_mute) {
         if (g_cam_muted) lv_obj_add_state(g_cam_sw_mute, LV_STATE_CHECKED);
@@ -176,33 +160,9 @@ static void apply_camera_ui_state() {
         lv_obj_set_style_text_color(g_cam_meta_label, g_cam_playing ? theme::primary_accent() : theme::text_subtle(), 0);
     }
     // Spinner visibility is controlled explicitly via cam_spinner_show/hide
-    // Keep the camera modal portrait-oriented even when the app is landscape.
     if (g_camera_sheet) {
-        lv_display_t* disp = lv_obj_get_display(g_camera_sheet);
-        int32_t disp_w = disp ? lv_display_get_horizontal_resolution(disp) : 0;
-        int32_t disp_h = disp ? lv_display_get_vertical_resolution(disp) : 0;
-        if (disp_w > 0 && disp_h > 0) {
-            const int32_t target_h = g_cam_fullscreen ? disp_h : (disp_h * 94) / 100;
-            const int32_t ratio_w = (target_h * 9) / 16;  // portrait 9:16 sheet
-            const int32_t max_w = g_cam_fullscreen ? (disp_w * 68) / 100 : (disp_w * 62) / 100;
-            const int32_t target_w = LV_MIN(ratio_w, max_w);
-            lv_obj_set_size(g_camera_sheet, target_w, target_h);
-        } else {
-            // Fallback if display metrics are unavailable
-            lv_obj_set_size(g_camera_sheet, g_cam_fullscreen ? LV_PCT(64) : LV_PCT(58),
-                            g_cam_fullscreen ? LV_PCT(100) : LV_PCT(94));
-        }
-
+        lv_obj_set_size(g_camera_sheet, LV_PCT(100), LV_PCT(100));
         lv_obj_center(g_camera_sheet);
-        if (g_cam_fullscreen) {
-            lv_obj_set_style_radius(g_camera_sheet, 0, 0);
-            lv_obj_set_style_pad_hor(g_camera_sheet, 8, 0);
-            lv_obj_set_style_pad_ver(g_camera_sheet, 8, 0);
-        } else {
-            lv_obj_set_style_radius(g_camera_sheet, 10, 0);
-            lv_obj_set_style_pad_hor(g_camera_sheet, 16, 0);
-            lv_obj_set_style_pad_ver(g_camera_sheet, 14, 0);
-        }
     }
     if (g_cam_controls_row) {
         lv_obj_set_flex_flow(g_cam_controls_row, LV_FLEX_FLOW_ROW_WRAP);
@@ -214,17 +174,17 @@ static void apply_camera_ui_state() {
 void build_camera_dialog(lv_obj_t* parent) {
     if (g_camera_modal) return;
 
-    // dim backdrop
+    // Full-screen camera mode container.
     g_camera_modal = lv_obj_create(parent);
     lv_obj_remove_style_all(g_camera_modal);
     lv_obj_set_size(g_camera_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(g_camera_modal, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_camera_modal, LV_OPA_30, 0);
+    lv_obj_set_style_bg_color(g_camera_modal, theme::surface_bg(), 0);
+    lv_obj_set_style_bg_opa(g_camera_modal, LV_OPA_COVER, 0);
     lv_obj_add_flag(g_camera_modal, LV_OBJ_FLAG_CLICKABLE);
 
-    // sheet
+    // Camera "page" fills the entire display.
     lv_obj_t* sheet = lv_obj_create(g_camera_modal);
-    lv_obj_set_size(sheet, LV_PCT(94), LV_PCT(94));
+    lv_obj_set_size(sheet, LV_PCT(100), LV_PCT(100));
     lv_obj_center(sheet);
     g_camera_sheet = sheet;
 
@@ -233,16 +193,12 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(sheet, theme::surface_bg(), 0);
     lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(sheet, theme::text_main(), 0);
-    lv_obj_set_style_border_width(sheet, 1, 0);
-    lv_obj_set_style_border_color(sheet, theme::border(), 0);
-    lv_obj_set_style_radius(sheet, 10, 0);
-    lv_obj_set_style_shadow_width(sheet, 18, 0);
-    lv_obj_set_style_shadow_opa(sheet, LV_OPA_30, 0);
-    lv_obj_set_style_shadow_color(sheet, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_pad_hor(sheet, 16, 0);
-    lv_obj_set_style_pad_ver(sheet, 14, 0);
+    lv_obj_set_style_border_width(sheet, 0, 0);
+    lv_obj_set_style_radius(sheet, 0, 0);
+    lv_obj_set_style_pad_hor(sheet, 10, 0);
+    lv_obj_set_style_pad_ver(sheet, 10, 0);
     lv_obj_set_flex_flow(sheet, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(sheet, 12, 0);
+    lv_obj_set_style_pad_row(sheet, 10, 0);
 
     // header row (title + actions)
     lv_obj_t* hdr_btns = nullptr;
@@ -257,12 +213,6 @@ void build_camera_dialog(lv_obj_t* parent) {
     set_centered_button_label(btn_snap, "Snapshot");
     lv_obj_add_event_cb(btn_snap, on_cam_snapshot, LV_EVENT_CLICKED, nullptr);
 
-    // Fullscreen button
-    g_cam_btn_full = lv_btn_create(hdr_btns);
-    style_button_tonal(g_cam_btn_full);
-    set_centered_button_label(g_cam_btn_full, "Fullscreen");
-    lv_obj_add_event_cb(g_cam_btn_full, on_cam_fullscreen, LV_EVENT_CLICKED, nullptr);
-
     lv_obj_t* btn_close = lv_btn_create(hdr_btns);
     style_button_tonal(btn_close);
     set_centered_button_label(btn_close, "Close");
@@ -275,7 +225,7 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(g_camera_surface, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(g_camera_surface, 1, 0);
     lv_obj_set_style_border_color(g_camera_surface, theme::border(), 0);
-    lv_obj_set_style_radius(g_camera_surface, 6, 0);
+    lv_obj_set_style_radius(g_camera_surface, 8, 0);
     lv_obj_clear_flag(g_camera_surface, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(g_camera_surface, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_grow(g_camera_surface, 1);
@@ -284,7 +234,8 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_size(g_cam_img, LV_PCT(100), LV_PCT(100));
     lv_obj_center(g_cam_img);
     lv_obj_set_style_image_opa(g_cam_img, LV_OPA_COVER, LV_PART_MAIN);
-    lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_FIT);
+    // LVGL v9.2.x doesn't provide LV_IMAGE_ALIGN_FIT; keep portable behavior.
+    lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_STRETCH);
     // LIVE/IDLE label (simple text, no chip)
     g_cam_live_label = lv_label_create(g_camera_surface);
     lv_obj_set_style_text_color(g_cam_live_label, lv_color_white(), 0);
@@ -348,14 +299,6 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_add_event_cb(g_cam_sw_mute, on_cam_mute_toggle, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(g_cam_sw_mute, on_cam_mute_toggle, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* lbl = lv_label_create(row_ctrls); lv_label_set_text(lbl, "Mute"); }
-
-    // click outside to dismiss
-    lv_obj_add_event_cb(g_camera_modal, [](lv_event_t* e){
-        if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-            log_line("[UI] camera dismissed (backdrop)");
-            close_camera();
-        }
-    }, LV_EVENT_CLICKED, nullptr);
 
     log_line("[UI] camera opened");
     apply_camera_ui_state();
