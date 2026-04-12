@@ -16,8 +16,6 @@
 #include "ui/common.h"
 
 #include <chrono>
-#include <cstdlib>
-#include <string>
 #include <thread>
 
 // Global (not namespaced) for `src/camera_rx_gst.cpp` compatibility.
@@ -43,7 +41,6 @@ static lv_timer_t* g_cam_spinner_timer = nullptr;
 
 static void cam_spinner_hide();
 static void apply_camera_ui_state();
-static void set_wayland_camera_transform(bool camera_mode);
 
 // Show the spinner immediately; optionally auto-hide after N milliseconds.
 static void cam_spinner_show(uint32_t auto_hide_ms) {
@@ -68,30 +65,6 @@ static void cam_spinner_hide() {
     if (g_cam_spinner_timer) { lv_timer_del(g_cam_spinner_timer); g_cam_spinner_timer = nullptr; }
 }
 
-// Request portrait/landscape output transform from Wayland compositor.
-// Uses wlr-randr so touch mapping stays correct and avoids LVGL runtime-rotation glitches.
-static void set_wayland_camera_transform(bool camera_mode) {
-    const char* home_t = std::getenv("CRIBGUARD_WAYLAND_HOME_TRANSFORM");
-    const char* cam_t  = std::getenv("CRIBGUARD_WAYLAND_CAMERA_TRANSFORM");
-    const char* target = camera_mode ? (cam_t ? cam_t : "180") : (home_t ? home_t : "270");
-    log_line((std::string("[UI] Wayland transform target=") + target).c_str());
-
-    std::string cmd =
-        "sh -lc '"
-        "if ! command -v wlr-randr >/dev/null 2>&1; then exit 0; fi; "
-        "out=$(wlr-randr | awk \"NR==1{print $1}\"); "
-        "if [ -n \"$out\" ]; then "
-        "wlr-randr --output \"$out\" --transform " + std::string(target) + " >/dev/null 2>&1; "
-        "fi'";
-
-    const int rc = std::system(cmd.c_str());
-    if (rc == 0) {
-        log_line(camera_mode ? "[UI] camera transform on (Wayland)" : "[UI] camera transform off (Wayland)");
-    } else {
-        log_line("[UI] WARN: failed to apply Wayland transform (wlr-randr)");
-    }
-}
-
 // Close and destroy the camera modal; stops streaming if currently playing.
 static void close_camera() {
     if (g_camera_modal) {
@@ -105,7 +78,6 @@ static void close_camera() {
         }
 
         cam_spinner_hide();
-        set_wayland_camera_transform(false);
 
         // Restore the previous app screen before deleting the camera screen.
         if (prev_screen) {
@@ -343,7 +315,6 @@ void build_camera_dialog(lv_obj_t* parent) {
     log_line("[UI] camera opened");
     apply_camera_ui_state();
     lv_screen_load(g_camera_modal);
-    set_wayland_camera_transform(true);
 }
 
 } // namespace cg::ui
