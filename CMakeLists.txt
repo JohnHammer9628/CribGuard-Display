@@ -68,15 +68,14 @@ if (NOT lvgl_POPULATED)
   FetchContent_Populate(lvgl)
 endif()
 
-# ---- Workaround: exclude LVGL assembly sources (.S) from build on Pi/Windows ----
+# ---- Workaround: remove LVGL assembly sources (.S) before build ----
 # LVGL's CMake globs *.S unconditionally. These optimized Helium/NEON sources
-# can trip the assembler on some distros/toolchains. We exclude them so the
-# portable C fallback is used.
-if (EXISTS "${lvgl_SOURCE_DIR}")
-  file(GLOB_RECURSE LVGL_ASM_SOURCES "${lvgl_SOURCE_DIR}/src/*.S")
-  if (LVGL_ASM_SOURCES)
-    set_source_files_properties(${LVGL_ASM_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
-  endif()
+# fail on aarch64 (Pi 5) and x86 (Windows). set_source_files_properties doesn't
+# carry into the subdirectory scope, so we delete the files outright.
+file(GLOB_RECURSE LVGL_ASM_SOURCES "${lvgl_SOURCE_DIR}/src/*.S")
+if (LVGL_ASM_SOURCES)
+  file(REMOVE ${LVGL_ASM_SOURCES})
+  message(STATUS "Removed LVGL .S assembly files to avoid assembler errors")
 endif()
 
 # Build LVGL now
