@@ -118,13 +118,11 @@ static std::atomic<bool> g_logged_first_frame{false};
 extern lv_obj_t* g_cam_img;
 extern lv_obj_t* g_cam_stats_label;
 
-// LVGL async callback that installs the latest frame into the UI image widget.
-static void ui_set_frame_cb(void*) {
-  struct PendingResetGuard {
-    ~PendingResetGuard() {
-      g_frame_update_pending.store(false, std::memory_order_release);
-    }
-  } reset_guard;
+// Poll from main loop: installs the latest frame into the UI image widget.
+// Called from the main thread (not GStreamer thread).
+void poll_gstreamer_frame() {
+  if (!g_frame_update_pending.load(std::memory_order_acquire)) return;
+  g_frame_update_pending.store(false, std::memory_order_release);
 
   if (!g_cam_img) return;
 
@@ -214,11 +212,7 @@ static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer /*user_data*/) {
                " bytes=" + std::to_string(static_cast<unsigned long long>(map.size))).c_str());
     }
 
-    if (!g_frame_update_pending.exchange(true, std::memory_order_acq_rel)) {
-      if (lv_async_call(ui_set_frame_cb, nullptr) != LV_RESULT_OK) {
-        g_frame_update_pending.store(false, std::memory_order_release);
-      }
-    }
+    g_frame_update_pending.store(true, std::memory_order_release);
   }
   gst_sample_unref(sample);
   return GST_FLOW_OK;
@@ -368,6 +362,7 @@ void log_gstreamer_support_status() {
 
 void start_gstreamer_receiver() { log_line("[GST] unavailable (headers not found)"); }
 void stop_gstreamer_receiver() { log_line("[GST] unavailable (headers not found)"); }
+void poll_gstreamer_frame() {}
 void log_gstreamer_support_status() {
     log_line("[GST] support: compiled=no (headers missing at build time)");
     log_line("[GST] HINT: install libgstreamer dev packages and rebuild if camera RX is required");

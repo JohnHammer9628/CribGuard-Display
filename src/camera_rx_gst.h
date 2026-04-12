@@ -13,6 +13,10 @@ void stop_gstreamer_receiver();
 // (notably avdec_h264) are available at runtime.
 void log_gstreamer_support_status();
 
+// Poll for new frames from the GStreamer thread and update the LVGL image widget.
+// Call this from the main loop (main thread only).
+void poll_gstreamer_frame();
+
 // Pulls the latest decoded RGBA frame from the receiver.
 // Returns true if a newer frame was copied into `pixels` since the last pull.
 // `frame_id` is monotonic and can be used by UI code to detect updates.

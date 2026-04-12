@@ -255,6 +255,7 @@ int main(int /*argc*/, char** /*argv*/) {
     log_line("[SIM] entering loop");
 
     while (!g_quit) {
+        poll_gstreamer_frame();
         lv_timer_handler();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         lv_tick_inc(5); // advance LVGL tick so events/timeouts fire
