@@ -21,13 +21,13 @@
 // Global (not namespaced) for `src/camera_rx_gst.cpp` compatibility.
 lv_obj_t* g_cam_img = nullptr;
 lv_obj_t* g_cam_stats_label = nullptr;
+lv_obj_t* g_cam_spinner = nullptr;
 
 namespace cg::ui {
 
 static lv_obj_t* g_camera_modal = nullptr;
 static lv_obj_t* g_camera_surface = nullptr;
 static lv_obj_t* g_camera_sheet = nullptr;
-lv_obj_t* g_cam_spinner = nullptr;
 static lv_obj_t* g_cam_live_label = nullptr;
 static lv_obj_t* g_cam_meta_label = nullptr;
 static lv_obj_t* g_cam_btn_full = nullptr;
