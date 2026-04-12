@@ -32,6 +32,7 @@ static lv_obj_t* g_cam_live_label = nullptr;
 static lv_obj_t* g_cam_meta_label = nullptr;
 static lv_obj_t* g_cam_btn_full = nullptr;
 static lv_obj_t* g_cam_sw_mute = nullptr;
+static lv_obj_t* g_cam_controls_row = nullptr;
 
 static bool g_cam_fullscreen = false;
 static bool g_cam_muted = false;
@@ -86,6 +87,7 @@ static void close_camera() {
         g_cam_stats_label = nullptr;
         g_cam_btn_full = nullptr;
         g_cam_sw_mute = nullptr;
+        g_cam_controls_row = nullptr;
         g_cam_fullscreen = false;
         g_cam_playing = false;
         log_line("[UI] camera closed");
@@ -174,19 +176,37 @@ static void apply_camera_ui_state() {
         lv_obj_set_style_text_color(g_cam_meta_label, g_cam_playing ? theme::primary_accent() : theme::text_subtle(), 0);
     }
     // Spinner visibility is controlled explicitly via cam_spinner_show/hide
-    // Apply sheet sizing for fullscreen
+    // Keep the camera modal portrait-oriented even when the app is landscape.
     if (g_camera_sheet) {
+        lv_display_t* disp = lv_obj_get_display(g_camera_sheet);
+        int32_t disp_w = disp ? lv_display_get_horizontal_resolution(disp) : 0;
+        int32_t disp_h = disp ? lv_display_get_vertical_resolution(disp) : 0;
+        if (disp_w > 0 && disp_h > 0) {
+            const int32_t target_h = g_cam_fullscreen ? disp_h : (disp_h * 94) / 100;
+            const int32_t ratio_w = (target_h * 9) / 16;  // portrait 9:16 sheet
+            const int32_t max_w = g_cam_fullscreen ? (disp_w * 68) / 100 : (disp_w * 62) / 100;
+            const int32_t target_w = LV_MIN(ratio_w, max_w);
+            lv_obj_set_size(g_camera_sheet, target_w, target_h);
+        } else {
+            // Fallback if display metrics are unavailable
+            lv_obj_set_size(g_camera_sheet, g_cam_fullscreen ? LV_PCT(64) : LV_PCT(58),
+                            g_cam_fullscreen ? LV_PCT(100) : LV_PCT(94));
+        }
+
+        lv_obj_center(g_camera_sheet);
         if (g_cam_fullscreen) {
-            lv_obj_set_size(g_camera_sheet, LV_PCT(100), LV_PCT(100));
             lv_obj_set_style_radius(g_camera_sheet, 0, 0);
             lv_obj_set_style_pad_hor(g_camera_sheet, 8, 0);
             lv_obj_set_style_pad_ver(g_camera_sheet, 8, 0);
         } else {
-            lv_obj_set_size(g_camera_sheet, LV_PCT(94), LV_PCT(94));
             lv_obj_set_style_radius(g_camera_sheet, 10, 0);
             lv_obj_set_style_pad_hor(g_camera_sheet, 16, 0);
             lv_obj_set_style_pad_ver(g_camera_sheet, 14, 0);
         }
+    }
+    if (g_cam_controls_row) {
+        lv_obj_set_flex_flow(g_cam_controls_row, LV_FLEX_FLOW_ROW_WRAP);
+        lv_obj_set_flex_align(g_cam_controls_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     }
 }
 
@@ -264,7 +284,7 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_size(g_cam_img, LV_PCT(100), LV_PCT(100));
     lv_obj_center(g_cam_img);
     lv_obj_set_style_image_opa(g_cam_img, LV_OPA_COVER, LV_PART_MAIN);
-    lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_STRETCH);
+    lv_image_set_inner_align(g_cam_img, LV_IMAGE_ALIGN_FIT);
     // LIVE/IDLE label (simple text, no chip)
     g_cam_live_label = lv_label_create(g_camera_surface);
     lv_obj_set_style_text_color(g_cam_live_label, lv_color_white(), 0);
@@ -286,6 +306,7 @@ void build_camera_dialog(lv_obj_t* parent) {
 
     // controls row (moved below video)
     lv_obj_t* row_ctrls = lv_obj_create(sheet);
+    g_cam_controls_row = row_ctrls;
     lv_obj_set_size(row_ctrls, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_clear_flag(row_ctrls, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(row_ctrls, LV_SCROLLBAR_MODE_OFF);
@@ -295,9 +316,10 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_style_border_color(row_ctrls, theme::border(), 0);
     lv_obj_set_style_border_side(row_ctrls, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_pad_all(row_ctrls, 8, 0);
+    lv_obj_set_style_pad_row(row_ctrls, 8, 0);
     lv_obj_set_style_pad_column(row_ctrls, 10, 0);
-    lv_obj_set_flex_flow(row_ctrls, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row_ctrls, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_flow(row_ctrls, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(row_ctrls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* btn_play = lv_btn_create(row_ctrls);
     style_button_tonal_ex(btn_play, 6, theme::sp12, theme::sp8);
