@@ -37,9 +37,14 @@ static bool g_cam_muted = false;
 static bool g_cam_playing = false;
 static bool g_cam_show_spinner = false;
 static lv_timer_t* g_cam_spinner_timer = nullptr;
+static bool g_cam_rotation_active = false;
+static lv_display_rotation_t g_cam_prev_rotation = LV_DISPLAY_ROTATION_0;
 
 static void cam_spinner_hide();
 static void apply_camera_ui_state();
+static void enter_camera_rotation_mode(lv_obj_t* context);
+static void exit_camera_rotation_mode();
+static lv_display_rotation_t rotate_ccw_90(lv_display_rotation_t rot);
 
 // Show the spinner immediately; optionally auto-hide after N milliseconds.
 static void cam_spinner_show(uint32_t auto_hide_ms) {
@@ -64,6 +69,42 @@ static void cam_spinner_hide() {
     if (g_cam_spinner_timer) { lv_timer_del(g_cam_spinner_timer); g_cam_spinner_timer = nullptr; }
 }
 
+// Convert current display rotation to one step counterclockwise.
+static lv_display_rotation_t rotate_ccw_90(lv_display_rotation_t rot) {
+    switch (rot) {
+        case LV_DISPLAY_ROTATION_0:   return LV_DISPLAY_ROTATION_270;
+        case LV_DISPLAY_ROTATION_90:  return LV_DISPLAY_ROTATION_0;
+        case LV_DISPLAY_ROTATION_180: return LV_DISPLAY_ROTATION_90;
+        case LV_DISPLAY_ROTATION_270: return LV_DISPLAY_ROTATION_180;
+        default:                      return LV_DISPLAY_ROTATION_270;
+    }
+}
+
+// Rotate the whole display 90 degrees counterclockwise for camera mode.
+static void enter_camera_rotation_mode(lv_obj_t* context) {
+    lv_display_t* disp = context ? lv_obj_get_display(context) : lv_display_get_default();
+    if (!disp) return;
+
+    g_cam_prev_rotation = lv_display_get_rotation(disp);
+    const lv_display_rotation_t cam_rotation = rotate_ccw_90(g_cam_prev_rotation);
+    lv_display_set_rotation(disp, cam_rotation);
+    g_cam_rotation_active = true;
+    log_line("[UI] camera rotation on (90deg CCW)");
+}
+
+// Restore original display rotation after camera mode closes.
+static void exit_camera_rotation_mode() {
+    if (!g_cam_rotation_active) return;
+    lv_display_t* disp = lv_display_get_default();
+    if (!disp) {
+        g_cam_rotation_active = false;
+        return;
+    }
+    lv_display_set_rotation(disp, g_cam_prev_rotation);
+    g_cam_rotation_active = false;
+    log_line("[UI] camera rotation off (restored)");
+}
+
 // Close and destroy the camera modal; stops streaming if currently playing.
 static void close_camera() {
     if (g_camera_modal) {
@@ -86,6 +127,7 @@ static void close_camera() {
         g_cam_sw_mute = nullptr;
         g_cam_controls_row = nullptr;
         g_cam_playing = false;
+        exit_camera_rotation_mode();
         log_line("[UI] camera closed");
     }
 }
@@ -173,6 +215,8 @@ static void apply_camera_ui_state() {
 // Build and show the camera modal (singleton).
 void build_camera_dialog(lv_obj_t* parent) {
     if (g_camera_modal) return;
+
+    enter_camera_rotation_mode(parent);
 
     // Full-screen camera mode container.
     g_camera_modal = lv_obj_create(parent);
