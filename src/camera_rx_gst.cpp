@@ -169,8 +169,20 @@ void poll_gstreamer_frame() {
     }
     lv_obj_clear_flag(g_cam_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(g_cam_img);
+
+    // DEBUG: fill with solid red to verify rendering works
+    for (size_t i = 0; i < g_cam_pixels_ui.size(); i += 4) {
+      g_cam_pixels_ui[i + 0] = 0;     // B
+      g_cam_pixels_ui[i + 1] = 0;     // G
+      g_cam_pixels_ui[i + 2] = 255;   // R
+      g_cam_pixels_ui[i + 3] = 255;   // A
+    }
+    g_cam_dsc.data = g_cam_pixels_ui.data();
+    lv_image_set_src(g_cam_img, &g_cam_dsc);
+    lv_obj_invalidate(g_cam_img);
+
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame applied to widget %dx%d size=%u",
+    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame FORCED RED %dx%d size=%u",
                   g_cam_w_ui, g_cam_h_ui, (unsigned)g_cam_pixels_ui.size());
     log_line(buf);
   }
