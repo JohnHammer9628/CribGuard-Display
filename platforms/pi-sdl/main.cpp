@@ -187,12 +187,10 @@ int main(int /*argc*/, char** /*argv*/) {
     log_line("[SIM] SDL_Init ok");
 #endif
 
-  // Display size: native panel is 720x1280 (portrait). For landscape kiosk
-  // mode we create a 720x1280 window and let LVGL's software rotation
-  // present the UI at 1280x720 landscape. On desktop/sim, use 1280x720 directly.
+  // Display size. On Pi DSI panel the native mode is 720x1280 (portrait).
+  // We match the native resolution so SDL/KMSDRM can set the CRTC mode.
   int SCR_W = 1280;
   int SCR_H = 720;
-  bool use_sw_rotate = false;
 
 #if HAVE_SDL2_HEADER
   {
@@ -201,13 +199,8 @@ int main(int /*argc*/, char** /*argv*/) {
           char buf[128];
           std::snprintf(buf, sizeof(buf), "[SIM] native display mode: %dx%d", dm.w, dm.h);
           log_line(buf);
-          // Portrait panel (h > w): create window at native size, rotate via LVGL
-          if (dm.h > dm.w) {
-              SCR_W = dm.w;
-              SCR_H = dm.h;
-              use_sw_rotate = true;
-              log_line("[SIM] portrait panel detected, will use LVGL sw rotation for landscape");
-          }
+          SCR_W = dm.w;
+          SCR_H = dm.h;
       }
   }
 #endif
@@ -223,11 +216,6 @@ int main(int /*argc*/, char** /*argv*/) {
       std::snprintf(buf, sizeof(buf), "[SIM] SDL window created %dx%d", SCR_W, SCR_H);
       log_line(buf);
   }
-
-    if (use_sw_rotate) {
-        lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
-        log_line("[SIM] LVGL rotation set to 90 (landscape)");
-    }
 
     log_startup_diagnostics(SCR_W, SCR_H);
     log_gstreamer_support_status();
