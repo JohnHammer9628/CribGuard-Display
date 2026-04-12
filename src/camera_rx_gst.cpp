@@ -117,6 +117,7 @@ static std::atomic<bool> g_logged_first_frame{false};
 // Declared in UI globals (in the UI layer)
 extern lv_obj_t* g_cam_img;
 extern lv_obj_t* g_cam_stats_label;
+extern lv_obj_t* g_cam_spinner;
 
 // Poll from main loop: installs the latest frame into the UI image widget.
 // Called from the main thread (not GStreamer thread).
@@ -156,6 +157,11 @@ void poll_gstreamer_frame() {
   g_cam_dsc.data_size = g_cam_pixels_ui.size();
   lv_image_set_src(g_cam_img, &g_cam_dsc);
   lv_obj_invalidate(g_cam_img);
+
+  // Hide spinner once we have a real frame
+  if (g_cam_spinner) {
+    lv_obj_add_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
+  }
 
   static bool s_logged_set = false;
   if (!s_logged_set) {
