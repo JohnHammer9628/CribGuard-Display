@@ -113,6 +113,7 @@ static std::mutex g_cam_frame_mtx;
 static std::atomic<bool> g_frame_update_pending{false};
 static lv_image_dsc_t g_cam_dsc{};
 static std::atomic<bool> g_logged_first_frame{false};
+static bool g_first_frame_rendered = false;
 
 // Declared in UI globals (in the UI layer)
 extern lv_obj_t* g_cam_img;
@@ -158,18 +159,20 @@ void poll_gstreamer_frame() {
   lv_image_set_src(g_cam_img, &g_cam_dsc);
   lv_obj_invalidate(g_cam_img);
 
-  // Hide spinner once we have a real frame
-  if (g_cam_spinner) {
-    lv_obj_add_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
-  }
-
-  static bool s_logged_set = false;
-  if (!s_logged_set) {
+  // Hide spinner and ensure image is visible once we have a real frame
+  if (!g_first_frame_rendered) {
+    g_first_frame_rendered = true;
+    if (g_cam_spinner) {
+      lv_obj_del(g_cam_spinner);
+      g_cam_spinner = nullptr;
+      log_line("[GST] poll: spinner deleted");
+    }
+    lv_obj_clear_flag(g_cam_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(g_cam_img);
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "[GST] poll: frame applied to widget %dx%d size=%u",
+    std::snprintf(buf, sizeof(buf), "[GST] poll: first frame applied to widget %dx%d size=%u",
                   g_cam_w_ui, g_cam_h_ui, (unsigned)g_cam_pixels_ui.size());
     log_line(buf);
-    s_logged_set = true;
   }
 
   static uint32_t s_win_start_ms = 0;
@@ -372,6 +375,7 @@ void stop_gstreamer_receiver() {
     }
     g_frame_update_pending.store(false, std::memory_order_release);
     g_logged_first_frame.store(false, std::memory_order_release);
+    g_first_frame_rendered = false;
 
     log_line("[GST] receiver stopped");
 }
