@@ -7,6 +7,7 @@ extern "C" {
 
 namespace cg::ui {
 void build_camera_dialog(lv_obj_t* parent);
+void start_camera_always_on();
 } // namespace cg::ui
 
 // Needed by the GStreamer receiver (`src/camera_rx_gst.cpp`) to push frames into LVGL.

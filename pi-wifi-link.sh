@@ -70,6 +70,8 @@ ensure_iface_up(){
   local iface="$1"
   # unblock if rfkill blocked
   rfkill list wifi 2>/dev/null | grep -qi 'Soft blocked: yes' && rfkill unblock wifi || true
+  nmcli radio wifi on || true
+  nmcli device set "$iface" managed yes || true
   ip link set "$iface" up || true
   sleep 0.5
 }
@@ -149,14 +151,16 @@ configure_client(){
   delete_con_if_exists "$CLIENT_CON"
 
   # create in one step (address + method), forcing WPA2-PSK
-  nmcli device wifi rescan || true
+  nmcli radio wifi on || true
+  nmcli device set "$iface" managed yes || true
+  nmcli device wifi rescan ifname "$iface" || true
   nmcli connection add type wifi ifname "$iface" con-name "$CLIENT_CON" ssid "$SSID" \
     wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PSK" \
     ipv4.method manual ipv4.addresses "$CLIENT_IP_CIDR" ipv4.gateway "$AP_GW" \
     ipv4.dns "" ipv4.never-default yes ipv6.method ignore connection.autoconnect yes
 
   # bring it up and wait for ip
-  nmcli connection up "$CLIENT_CON" || true
+  nmcli connection up "$CLIENT_CON" ifname "$iface" || true
 
   # retry activation up to several times (some drivers take a moment)
   local tries=0
@@ -175,7 +179,7 @@ configure_client(){
       die "Client failed to connect or get IP after multiple attempts. Last ACTIVE='$ACTIVE' ADDR='$ADDR'"
     fi
     sleep 1
-    nmcli connection up "$CLIENT_CON" >/dev/null 2>&1 || true
+    nmcli connection up "$CLIENT_CON" ifname "$iface" >/dev/null 2>&1 || true
   done
 }
 

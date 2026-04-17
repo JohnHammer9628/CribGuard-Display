@@ -110,6 +110,7 @@ extern "C" {
 #include "ui_app.h"
 
 bool g_quit = false;
+int g_exit_code = 0;
 
 // Signal handler used by the simulator (Ctrl+C / SIGTERM).
 // Sets the global quit flag so the main loop exits cleanly.
@@ -267,5 +268,5 @@ int main(int /*argc*/, char** /*argv*/) {
         stop_gstreamer_receiver();
     
     if (g_log_file) std::fclose(g_log_file);
-    return 0;
+    return g_exit_code;
 }

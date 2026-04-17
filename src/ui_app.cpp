@@ -4,10 +4,12 @@
 // Kept intentionally small: the actual UI is implemented in `src/ui/*`.
 #include "ui_app.h"
 
+#include "ui/camera.h"
 #include "ui/dashboard.h"
 
 // Build the LVGL UI on the active screen.
 void build_ui() {
     cg::ui::build_main_screen();
+    cg::ui::start_camera_always_on();
 }
 

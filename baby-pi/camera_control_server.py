@@ -14,6 +14,8 @@ import os
 import logging
 import shutil
 import shlex
+import threading
+import time
 
 app = Flask(__name__)
 CORS(app)  # Allow cross-origin requests from Parent Pi
@@ -26,8 +28,12 @@ logger = logging.getLogger(__name__)
 streaming_process = None
 recording_process = None
 playback_process = None
-parent_ip = "10.0.0.98"
-parent_port = 5000
+parent_ip = os.environ.get("CG_PARENT_IP", "192.168.50.1").strip()
+parent_port = int(os.environ.get("CG_PARENT_PORT", "5000"))
+AUTO_START_STREAM = os.environ.get("CG_AUTOSTART_CAMERA", "1").strip().lower() not in ("0", "false", "no")
+AUTO_START_DELAY_SEC = float(os.environ.get("CG_AUTOSTART_DELAY_SEC", "2.0"))
+AUTO_START_RETRIES = int(os.environ.get("CG_AUTOSTART_RETRIES", "20"))
+AUTO_START_RETRY_SEC = float(os.environ.get("CG_AUTOSTART_RETRY_SEC", "1.5"))
 LULLABIES_DIR = os.path.expanduser("~/Lullabies")
 os.makedirs(LULLABIES_DIR, exist_ok=True)
 
@@ -73,6 +79,129 @@ def stream_executable_exists(cmd):
     return shutil.which(exe) is not None
 
 
+def stop_camera_stream():
+    """Stop stream process if running."""
+    global streaming_process
+
+    if not streaming_process or streaming_process.poll() is not None:
+        logger.warning("Camera not streaming")
+        return False, {'success': False, 'error': 'Not streaming'}, 400
+
+    try:
+        logger.info(f"Stopping camera stream (PID: {streaming_process.pid})")
+        os.killpg(os.getpgid(streaming_process.pid), signal.SIGTERM)
+        try:
+            streaming_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning("Process didn't exit gracefully, sending SIGKILL")
+            os.killpg(os.getpgid(streaming_process.pid), signal.SIGKILL)
+            streaming_process.wait()
+        streaming_process = None
+        logger.info("Camera streaming stopped")
+        return True, {'success': True}, 200
+    except Exception as e:
+        logger.error(f"Failed to stop camera: {e}")
+        return False, {'success': False, 'error': str(e)}, 500
+
+
+def start_camera_stream(
+    target_ip,
+    target_port,
+    backend_override=None,
+    template_override=None,
+    allow_already=False
+):
+    """Start camera stream process (idempotent when allow_already=True)."""
+    global streaming_process, parent_ip, parent_port
+
+    if streaming_process and streaming_process.poll() is None:
+        payload = {
+            'success': True if allow_already else False,
+            'error': None if allow_already else 'Already streaming',
+            'already_streaming': True,
+            'pid': streaming_process.pid,
+            'parent_ip': parent_ip,
+            'parent_port': parent_port,
+            'camera_backend': camera_backend,
+            'camera_stream_template': camera_stream_template or CAMERA_BACKEND_DEFAULT_TEMPLATES.get(camera_backend, "")
+        }
+        status = 200 if allow_already else 400
+        if allow_already:
+            logger.info("Camera already streaming; treating as success")
+        else:
+            logger.warning("Camera already streaming")
+        return allow_already, payload, status
+
+    parent_ip = str(target_ip)
+    parent_port = int(target_port)
+
+    try:
+        backend, template, cmd = resolve_stream_command(
+            parent_ip,
+            parent_port,
+            backend_override=backend_override,
+            template_override=template_override
+        )
+
+        if not stream_executable_exists(cmd):
+            logger.error(f"Camera backend '{backend}' command not found/executable: {cmd[0]}")
+            return False, {
+                'success': False,
+                'error': f"stream command not found or not executable: {cmd[0]}",
+                'camera_backend': backend,
+                'camera_stream_template': template
+            }, 500
+
+        logger.info(f"Starting camera stream: {' '.join(cmd)}")
+
+        streaming_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid  # Create new process group for clean shutdown
+        )
+
+        logger.info(f"Camera streaming started (PID: {streaming_process.pid})")
+        payload = {
+            'success': True,
+            'pid': streaming_process.pid,
+            'parent_ip': parent_ip,
+            'parent_port': parent_port,
+            'camera_backend': backend,
+            'camera_stream_template': template,
+            'stream_cmd': cmd
+        }
+        return True, payload, 200
+    except Exception as e:
+        logger.error(f"Failed to start camera: {e}")
+        return False, {'success': False, 'error': str(e)}, 500
+
+
+def start_camera_stream_autostart():
+    """Background autostart loop for always-on showcase mode."""
+    if not AUTO_START_STREAM:
+        logger.info("Camera autostart disabled (CG_AUTOSTART_CAMERA=0)")
+        return
+
+    def worker():
+        if AUTO_START_DELAY_SEC > 0:
+            time.sleep(AUTO_START_DELAY_SEC)
+
+        for attempt in range(1, AUTO_START_RETRIES + 1):
+            ok, payload, _ = start_camera_stream(parent_ip, parent_port, allow_already=True)
+            if ok:
+                logger.info(f"Camera autostart ready (attempt {attempt}/{AUTO_START_RETRIES})")
+                return
+            logger.warning(
+                f"Camera autostart attempt {attempt}/{AUTO_START_RETRIES} failed: {payload.get('error', 'unknown')}"
+            )
+            time.sleep(AUTO_START_RETRY_SEC)
+
+        logger.error("Camera autostart exhausted retries; service stays up for remote /api/start attempts")
+
+    threading.Thread(target=worker, daemon=True, name="camera-autostart").start()
+
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get current camera status"""
@@ -95,12 +224,6 @@ def get_status():
 @app.route('/api/start', methods=['POST'])
 def start_camera():
     """Start IR camera streaming"""
-    global streaming_process, parent_ip, parent_port
-
-    # Check if already streaming
-    if streaming_process and streaming_process.poll() is None:
-        logger.warning("Camera already streaming")
-        return jsonify({'success': False, 'error': 'Already streaming'}), 400
 
     # Get optional parameters
     data = request.get_json() or {}
@@ -109,81 +232,21 @@ def start_camera():
     req_backend = data.get('camera_backend')
     req_template = data.get('camera_stream_template')
 
-    # Update global config
-    parent_ip = target_ip
-    parent_port = target_port
-
-    try:
-        backend, template, cmd = resolve_stream_command(
-            parent_ip,
-            parent_port,
-            backend_override=req_backend,
-            template_override=req_template
-        )
-
-        if not stream_executable_exists(cmd):
-            logger.error(f"Camera backend '{backend}' command not found/executable: {cmd[0]}")
-            return jsonify({
-                'success': False,
-                'error': f"stream command not found or not executable: {cmd[0]}",
-                'camera_backend': backend,
-                'camera_stream_template': template
-            }), 500
-
-        logger.info(f"Starting camera stream: {' '.join(cmd)}")
-
-        streaming_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            preexec_fn=os.setsid  # Create new process group for clean shutdown
-        )
-
-        logger.info(f"Camera streaming started (PID: {streaming_process.pid})")
-        return jsonify({
-            'success': True,
-            'pid': streaming_process.pid,
-            'parent_ip': parent_ip,
-            'parent_port': parent_port,
-            'camera_backend': backend,
-            'camera_stream_template': template,
-            'stream_cmd': cmd
-        })
-
-    except Exception as e:
-        logger.error(f"Failed to start camera: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+    ok, payload, status = start_camera_stream(
+        target_ip,
+        target_port,
+        backend_override=req_backend,
+        template_override=req_template,
+        allow_already=True
+    )
+    return jsonify(payload), status
 
 
 @app.route('/api/stop', methods=['POST'])
 def stop_camera():
     """Stop IR camera streaming"""
-    global streaming_process
-
-    if not streaming_process or streaming_process.poll() is not None:
-        logger.warning("Camera not streaming")
-        return jsonify({'success': False, 'error': 'Not streaming'}), 400
-
-    try:
-        # Send SIGTERM to process group
-        logger.info(f"Stopping camera stream (PID: {streaming_process.pid})")
-        os.killpg(os.getpgid(streaming_process.pid), signal.SIGTERM)
-
-        # Wait for process to exit (with timeout)
-        try:
-            streaming_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            logger.warning("Process didn't exit gracefully, sending SIGKILL")
-            os.killpg(os.getpgid(streaming_process.pid), signal.SIGKILL)
-            streaming_process.wait()
-
-        streaming_process = None
-        logger.info("Camera streaming stopped")
-        return jsonify({'success': True})
-
-    except Exception as e:
-        logger.error(f"Failed to stop camera: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+    ok, payload, status = stop_camera_stream()
+    return jsonify(payload), status
 
 
 @app.route('/api/record', methods=['POST'])
@@ -417,5 +480,5 @@ def health_check():
 if __name__ == '__main__':
     # Run on all interfaces, port 8000
     logger.info("Starting camera control server on port 8000")
+    start_camera_stream_autostart()
     app.run(host='0.0.0.0', port=8000, debug=False)
-

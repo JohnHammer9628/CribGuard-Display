@@ -7,7 +7,10 @@
 // Times are stored internally as 0-23 (24h), but displayed as "H:00 AM/PM".
 #include "ui/settings.h"
 
+#include <cstdlib>
+
 #include "logging.h"
+#include "ui_app.h"
 #include "ui/common.h"
 #include "ui/dashboard.h"
 #include "ui/state.h"
@@ -32,6 +35,20 @@ static void close_settings() {
 static void on_shutdown(lv_event_t* /*e*/) {
     log_line("[UI] shutdown requested");
     std::system("sudo /usr/local/bin/cribguard-shutdown.sh &");
+}
+
+// Exit the UI and keep kiosk service stopped (service template prevents restart on this code).
+static void on_exit_to_desktop(lv_event_t* /*e*/) {
+    log_line("[UI] exit-to-desktop requested");
+    g_exit_code = kExitCodeExitToDesktop;
+    g_quit = true;
+}
+
+// Exit the UI with normal code so systemd restarts it quickly.
+static void on_restart_ui(lv_event_t* /*e*/) {
+    log_line("[UI] restart requested");
+    g_exit_code = 0;
+    g_quit = true;
 }
 
 // Build and show the Settings modal (singleton).
@@ -145,6 +162,28 @@ void build_settings_dialog(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(dd_end, LV_OPA_40, LV_PART_MAIN);
     lv_obj_set_style_text_color(dd_end, theme::text_main(), LV_PART_MAIN);
 
+    // App control row
+    lv_obj_t* row_app = lv_obj_create(sheet);
+    lv_obj_set_size(row_app, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(row_app, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(row_app, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(row_app, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row_app, 0, 0);
+    lv_obj_set_style_pad_all(row_app, 0, 0);
+    lv_obj_set_style_pad_bottom(row_app, 6, 0);
+    lv_obj_set_flex_flow(row_app, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(row_app, 10, 0);
+
+    lv_obj_t* btn_exit_ui = lv_btn_create(row_app);
+    style_button_tonal(btn_exit_ui);
+    set_centered_button_label(btn_exit_ui, LV_SYMBOL_CLOSE " Exit To Desktop");
+    lv_obj_add_event_cb(btn_exit_ui, on_exit_to_desktop, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* btn_restart_ui = lv_btn_create(row_app);
+    style_button_tonal(btn_restart_ui);
+    set_centered_button_label(btn_restart_ui, "Restart UI");
+    lv_obj_add_event_cb(btn_restart_ui, on_restart_ui, LV_EVENT_CLICKED, nullptr);
+
     // Save handler
     lv_obj_add_event_cb(btn_save, [](lv_event_t* e){
         lv_obj_t* btn       = (lv_obj_t*)lv_event_get_target(e);
@@ -197,4 +236,3 @@ void build_settings_dialog(lv_obj_t* parent) {
 }
 
 } // namespace cg::ui
-

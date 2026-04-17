@@ -13,6 +13,8 @@ Environment=CRIBGUARD_USER=%i
 EnvironmentFile=-/etc/default/cribguard
 ExecStart=/usr/local/bin/cribguard-run.sh
 Restart=always
+# Allow in-app "Exit To Desktop" without immediate relaunch.
+RestartPreventExitStatus=200
 RestartSec=2
 
 [Install]
