@@ -17,7 +17,7 @@ capture:
 stream:
   enable_rtp: 1
   enable_raw_zmq: 1
-  parent_ip: "10.0.0.98"
+  parent_ip: "192.168.50.1"
   rtp_port: 5000
   zmq_endpoint: "tcp://*:5557"
   out_width: 640
