@@ -235,6 +235,31 @@ void baby_pi_stop_playback() {
     }
 }
 
+// Query the Baby Pi for the most recent wet state ("none" | "cold" | "warm").
+// Returns true on successful fetch/parse; `out_state` is "none" on failure.
+bool baby_pi_get_wet_status(std::string& out_state) {
+    out_state = "none";
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/wet_status";
+    std::string response;
+    if (!http_get(url, response)) return false;
+
+    size_t key = response.find("\"state\"");
+    if (key == std::string::npos) return false;
+    size_t colon = response.find(':', key);
+    if (colon == std::string::npos) return false;
+    size_t q1 = response.find('"', colon + 1);
+    if (q1 == std::string::npos) return false;
+    size_t q2 = response.find('"', q1 + 1);
+    if (q2 == std::string::npos) return false;
+
+    std::string s = response.substr(q1 + 1, q2 - (q1 + 1));
+    if (s == "cold" || s == "warm" || s == "none") {
+        out_state = s;
+        return true;
+    }
+    return false;
+}
+
 // Health check endpoint used to verify Baby Pi is reachable.
 bool baby_pi_check_status() {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/status";
@@ -259,6 +284,7 @@ static void curl_unavailable(const char* what) {
 void baby_pi_start_camera() { curl_unavailable("start_camera"); }
 void baby_pi_stop_camera() { curl_unavailable("stop_camera"); }
 bool baby_pi_check_status() { curl_unavailable("check_status"); return false; }
+bool baby_pi_get_wet_status(std::string& out_state) { out_state = "none"; curl_unavailable("wet_status"); return false; }
 void baby_pi_record_audio(int) { curl_unavailable("record_audio"); }
 bool baby_pi_list_lullabies(std::vector<std::string>& out_files) { out_files.clear(); curl_unavailable("list_lullabies"); return false; }
 void baby_pi_play_lullaby(const std::string&) { curl_unavailable("play_lullaby"); }

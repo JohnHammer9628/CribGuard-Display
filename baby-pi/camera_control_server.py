@@ -11,6 +11,7 @@ from flask_cors import CORS
 import subprocess
 import signal
 import os
+import json
 import logging
 import shutil
 import shlex
@@ -36,6 +37,7 @@ AUTO_START_RETRIES = int(os.environ.get("CG_AUTOSTART_RETRIES", "20"))
 AUTO_START_RETRY_SEC = float(os.environ.get("CG_AUTOSTART_RETRY_SEC", "1.5"))
 LULLABIES_DIR = os.path.expanduser("~/Lullabies")
 os.makedirs(LULLABIES_DIR, exist_ok=True)
+EVENTS_FILE = os.path.expanduser(os.environ.get("CG_EVENTS_FILE", "~/crib_monitor_events.jsonl"))
 
 # Camera backend selection:
 # - mlx90640 (default): ./mlx90640_streaming <parent_ip> <parent_port>
@@ -469,6 +471,42 @@ def update_config():
         'camera_backend': camera_backend,
         'camera_stream_template': camera_stream_template or CAMERA_BACKEND_DEFAULT_TEMPLATES.get(camera_backend, "")
     })
+
+
+def read_last_wet_state():
+    """Tail the lepton monitor's JSONL events file and return the most recent
+    wet state ('none' | 'cold' | 'warm'). Falls back to 'none' if the file is
+    missing, empty, or unreadable."""
+    result = {'state': 'none', 'event_type': '', 'ts': '', 'source': EVENTS_FILE}
+    try:
+        with open(EVENTS_FILE, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            chunk = min(size, 8192)
+            f.seek(size - chunk, 0)
+            tail = f.read().decode('utf-8', errors='ignore')
+        for line in reversed([ln for ln in tail.splitlines() if ln.strip()]):
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            st = ev.get('state')
+            if st in ('none', 'cold', 'warm'):
+                result['state'] = st
+                result['event_type'] = ev.get('event_type', '')
+                result['ts'] = ev.get('ts', '')
+                return result
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"wet_status read error: {e}")
+    return result
+
+
+@app.route('/api/wet_status', methods=['GET'])
+def wet_status():
+    """Return latest wet state read from the lepton monitor events log."""
+    return jsonify(read_last_wet_state())
 
 
 @app.route('/health', methods=['GET'])

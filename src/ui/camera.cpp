@@ -16,6 +16,8 @@
 #include "ui/common.h"
 
 #include <atomic>
+#include <cstring>
+#include <string>
 #include <thread>
 
 // Global (not namespaced) for `src/camera_rx_gst.cpp` compatibility.
@@ -37,6 +39,69 @@ static lv_obj_t* g_cam_controls_row = nullptr;
 static bool g_cam_muted = false;
 static lv_timer_t* g_cam_spinner_timer = nullptr;
 static std::atomic<bool> g_cam_start_worker_running{false};
+
+// Wet-state notification
+static lv_obj_t* g_cam_wet_banner = nullptr;
+static lv_timer_t* g_cam_wet_timer = nullptr;
+static std::atomic<bool> g_cam_wet_fetch_inflight{false};
+static std::atomic<bool> g_cam_wet_shutdown{false};
+static std::string g_cam_wet_last_state = "none";
+
+struct WetFetchResult {
+    bool ok;
+    std::string state;
+};
+
+// Show/hide the banner based on latest state. Must run on the LVGL thread.
+static void apply_wet_banner_state(const char* state) {
+    if (!g_cam_wet_banner) return;
+    bool is_wet = state && std::strcmp(state, "none") != 0;
+    if (!is_wet) {
+        lv_obj_add_flag(g_cam_wet_banner, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const char* text;
+    lv_color_t bg;
+    if (std::strcmp(state, "cold") == 0) {
+        text = LV_SYMBOL_WARNING "  Wetness detected (cold)";
+        bg = lv_color_hex(0x1E88E5);
+    } else {
+        text = LV_SYMBOL_WARNING "  Wetness detected (warm)";
+        bg = lv_color_hex(0xE53935);
+    }
+    lv_label_set_text(g_cam_wet_banner, text);
+    lv_obj_set_style_bg_color(g_cam_wet_banner, bg, 0);
+    lv_obj_clear_flag(g_cam_wet_banner, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Runs on the LVGL thread via lv_async_call after the HTTP worker finishes.
+static void wet_apply_async(void* param) {
+    WetFetchResult* r = static_cast<WetFetchResult*>(param);
+    if (!g_cam_wet_shutdown.load(std::memory_order_acquire) && r->ok) {
+        if (r->state != g_cam_wet_last_state) {
+            log_line((std::string("[WET] state: ") + g_cam_wet_last_state + " -> " + r->state).c_str());
+            g_cam_wet_last_state = r->state;
+        }
+        apply_wet_banner_state(r->state.c_str());
+    }
+    delete r;
+    g_cam_wet_fetch_inflight.store(false, std::memory_order_release);
+}
+
+// lv_timer callback: kick off one HTTP fetch if none is in flight.
+static void wet_poll_cb(lv_timer_t* /*t*/) {
+    if (g_cam_wet_shutdown.load(std::memory_order_acquire)) return;
+    bool expected = false;
+    if (!g_cam_wet_fetch_inflight.compare_exchange_strong(expected, true,
+            std::memory_order_acq_rel)) {
+        return;
+    }
+    std::thread([]() {
+        std::string st = "none";
+        bool ok = baby_pi_get_wet_status(st);
+        lv_async_call(wet_apply_async, new WetFetchResult{ok, std::move(st)});
+    }).detach();
+}
 
 static void apply_camera_ui_state();
 static void request_camera_start_async(const char* reason);
@@ -81,6 +146,10 @@ static void close_camera() {
         lv_obj_t* camera_screen = g_camera_modal;
         lv_obj_t* prev_screen = g_camera_prev_screen;
 
+        // Signal the wet-state worker to drop any pending UI update and stop the timer.
+        g_cam_wet_shutdown.store(true, std::memory_order_release);
+        if (g_cam_wet_timer) { lv_timer_del(g_cam_wet_timer); g_cam_wet_timer = nullptr; }
+
         // Restore the previous app screen before deleting the camera screen.
         if (prev_screen) {
             lv_screen_load(prev_screen);
@@ -98,6 +167,8 @@ static void close_camera() {
         g_cam_stats_label = nullptr;
         g_cam_sw_mute = nullptr;
         g_cam_controls_row = nullptr;
+        g_cam_wet_banner = nullptr;
+        g_cam_wet_last_state = "none";
         log_line("[UI] camera closed");
     }
 }
@@ -220,6 +291,21 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_style_text_color(g_cam_stats_label, theme::text_subtle(), 0);
     lv_label_set_text(g_cam_stats_label, "Waiting for stream...");
     lv_obj_align(g_cam_stats_label, LV_ALIGN_TOP_RIGHT, -12, 12);
+
+    // Wet-state banner (hidden until a wet_alert is observed).
+    g_cam_wet_banner = lv_label_create(g_camera_surface);
+    lv_label_set_long_mode(g_cam_wet_banner, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(g_cam_wet_banner, LV_PCT(80));
+    lv_obj_set_style_text_align(g_cam_wet_banner, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(g_cam_wet_banner, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(g_cam_wet_banner, lv_color_hex(0xE53935), 0);
+    lv_obj_set_style_bg_opa(g_cam_wet_banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(g_cam_wet_banner, 8, 0);
+    lv_obj_set_style_pad_hor(g_cam_wet_banner, 14, 0);
+    lv_obj_set_style_pad_ver(g_cam_wet_banner, 8, 0);
+    lv_label_set_text(g_cam_wet_banner, LV_SYMBOL_WARNING "  Wetness detected");
+    lv_obj_align(g_cam_wet_banner, LV_ALIGN_TOP_MID, 0, 44);
+    lv_obj_add_flag(g_cam_wet_banner, LV_OBJ_FLAG_HIDDEN);
     // spinner
     g_cam_spinner = lv_spinner_create(g_camera_surface);
     lv_spinner_set_anim_params(g_cam_spinner, 1000, 60);
@@ -256,6 +342,14 @@ void build_camera_dialog(lv_obj_t* parent) {
     apply_camera_ui_state();
     cam_spinner_show(0);
     request_camera_start_async("[UI] camera opened: ensuring stream live");
+
+    // Start the wet-state polling timer.
+    g_cam_wet_shutdown.store(false, std::memory_order_release);
+    g_cam_wet_last_state = "none";
+    if (g_cam_wet_timer) { lv_timer_del(g_cam_wet_timer); g_cam_wet_timer = nullptr; }
+    g_cam_wet_timer = lv_timer_create(wet_poll_cb, 1000, nullptr);
+    lv_timer_ready(g_cam_wet_timer);
+
     lv_screen_load(g_camera_modal);
 }
 
