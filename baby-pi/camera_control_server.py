@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 streaming_process = None
 recording_process = None
 playback_process = None
+listen_process = None
+
+# Live mic streaming ("listen mode"): baby pi -> parent pi, Opus over RTP.
+LISTEN_ALSA_DEVICE = os.environ.get("CG_LISTEN_ALSA_DEVICE", "plughw:2,0")
+LISTEN_PORT = int(os.environ.get("CG_LISTEN_PORT", "5001"))
+LISTEN_BITRATE = int(os.environ.get("CG_LISTEN_BITRATE_BPS", "24000"))
+LISTEN_SAMPLE_RATE = int(os.environ.get("CG_LISTEN_SAMPLE_RATE", "16000"))
 parent_ip = os.environ.get("CG_PARENT_IP", "192.168.50.1").strip()
 parent_port = int(os.environ.get("CG_PARENT_PORT", "5000"))
 AUTO_START_STREAM = os.environ.get("CG_AUTOSTART_CAMERA", "1").strip().lower() not in ("0", "false", "no")
@@ -507,6 +514,95 @@ def read_last_wet_state():
 def wet_status():
     """Return latest wet state read from the lepton monitor events log."""
     return jsonify(read_last_wet_state())
+
+
+def build_listen_pipeline(target_ip, target_port):
+    """gst-launch pipeline that captures from the reSpeaker Lite, encodes Opus
+    at voice bitrate, and sends RTP to the parent pi."""
+    return [
+        "/usr/bin/gst-launch-1.0", "-q",
+        "alsasrc", f"device={LISTEN_ALSA_DEVICE}", "!",
+        "audioconvert", "!",
+        "audioresample", "!",
+        f"audio/x-raw,rate={LISTEN_SAMPLE_RATE},channels=1", "!",
+        "opusenc", f"bitrate={LISTEN_BITRATE}", "audio-type=voice", "!",
+        "rtpopuspay", "pt=97", "!",
+        "udpsink", f"host={target_ip}", f"port={target_port}",
+        "sync=false", "async=false",
+    ]
+
+
+@app.route('/api/listen/start', methods=['POST'])
+def listen_start():
+    """Start streaming mic audio to the parent pi (idempotent)."""
+    global listen_process
+
+    data = request.get_json(silent=True) or {}
+    target_ip = data.get('parent_ip', parent_ip)
+    target_port = int(data.get('parent_port', LISTEN_PORT))
+
+    if listen_process and listen_process.poll() is None:
+        return jsonify({
+            'success': True,
+            'already_listening': True,
+            'pid': listen_process.pid,
+            'parent_ip': target_ip,
+            'parent_port': target_port,
+        })
+
+    cmd = build_listen_pipeline(target_ip, target_port)
+    try:
+        logger.info(f"Starting listen stream: {' '.join(cmd)}")
+        listen_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid,
+        )
+        return jsonify({
+            'success': True,
+            'pid': listen_process.pid,
+            'parent_ip': target_ip,
+            'parent_port': target_port,
+            'alsa_device': LISTEN_ALSA_DEVICE,
+        })
+    except Exception as e:
+        logger.error(f"Failed to start listen stream: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/listen/stop', methods=['POST'])
+def listen_stop():
+    """Stop the mic audio stream."""
+    global listen_process
+    if not listen_process or listen_process.poll() is not None:
+        return jsonify({'success': False, 'error': 'Not listening'}), 400
+    try:
+        logger.info(f"Stopping listen stream (PID: {listen_process.pid})")
+        os.killpg(os.getpgid(listen_process.pid), signal.SIGTERM)
+        try:
+            listen_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(listen_process.pid), signal.SIGKILL)
+            listen_process.wait()
+        listen_process = None
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Failed to stop listen stream: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/listen/status', methods=['GET'])
+def listen_status():
+    """Whether the mic is currently streaming."""
+    global listen_process
+    active = listen_process is not None and listen_process.poll() is None
+    return jsonify({
+        'listening': active,
+        'pid': listen_process.pid if active else None,
+        'alsa_device': LISTEN_ALSA_DEVICE,
+        'port': LISTEN_PORT,
+    })
 
 
 @app.route('/health', methods=['GET'])

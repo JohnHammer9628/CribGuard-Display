@@ -1,0 +1,24 @@
+[Unit]
+Description=CribGuard audio listener (receive Opus/RTP from baby pi, play on USB speaker)
+After=sound.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi5
+Environment=CG_LISTEN_PORT=5001
+Environment=CG_LISTEN_ALSA_DEVICE=plughw:2,0
+Environment=CG_LISTEN_SAMPLE_RATE=16000
+ExecStart=/usr/bin/gst-launch-1.0 -q \
+  udpsrc port=${CG_LISTEN_PORT} caps="application/x-rtp,media=audio,encoding-name=OPUS,payload=97,clock-rate=48000,encoding-params=(string)1" ! \
+  rtpjitterbuffer latency=120 ! \
+  rtpopusdepay ! \
+  opusdec ! \
+  audioconvert ! \
+  audioresample ! \
+  alsasink device=${CG_LISTEN_ALSA_DEVICE} sync=false
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
