@@ -154,6 +154,41 @@ static void request_status_check() {
     }).detach();
 }
 
+// Cry state polling: drives the big center label on the dashboard. Mirrors
+// the wet-state banner's polling pattern — HTTP on a worker thread, UI
+// update via lv_async_call. One static timer, shared across the life of
+// the dashboard screen (not re-created on theme rebuild).
+static std::atomic<bool> g_cry_in_flight{false};
+static lv_timer_t* g_cry_timer = nullptr;
+
+struct CryFetchResult { bool ok; std::string state; };
+
+static void on_cry_async(void* param) {
+    CryFetchResult* r = static_cast<CryFetchResult*>(param);
+    if (r->ok && state::lbl_status) {
+        if (r->state == "crying") {
+            set_status_text("Crying", lv_color_hex(0xCC2222));
+        } else {
+            set_status_text("Calm", lv_color_hex(0x22AA22));
+        }
+    }
+    delete r;
+    g_cry_in_flight.store(false, std::memory_order_release);
+}
+
+static void request_cry_check() {
+    bool expected = false;
+    if (!g_cry_in_flight.compare_exchange_strong(expected, true,
+            std::memory_order_acq_rel)) {
+        return;
+    }
+    std::thread([](){
+        std::string st = "none";
+        bool ok = baby_pi_get_cry_status(st);
+        lv_async_call(on_cry_async, new CryFetchResult{ok, std::move(st)});
+    }).detach();
+}
+
 static void vol_apply_visuals();
 
 static void set_volume_value(int v) {
@@ -840,6 +875,13 @@ void build_main_screen() {
         g_status_timer = lv_timer_create([](lv_timer_t* /*t*/){
             request_status_check();
         }, 5000, nullptr);
+    }
+    // Poll /api/cry_status once per second to drive the big center label.
+    if (!g_cry_timer) {
+        request_cry_check();
+        g_cry_timer = lv_timer_create([](lv_timer_t* /*t*/){
+            request_cry_check();
+        }, 1000, nullptr);
     }
 }
 

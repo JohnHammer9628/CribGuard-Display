@@ -30,6 +30,9 @@ streaming_process = None
 recording_process = None
 playback_process = None
 listen_process = None
+cry_detector_process = None
+CRY_DETECTOR_CMD = os.environ.get("CG_CRY_DETECTOR_CMD", "/usr/bin/python3 /home/jammin/cry_detector.py").split()
+AUTO_START_CRY = os.environ.get("CG_AUTOSTART_CRY", "1").strip().lower() not in ("0", "false", "no")
 
 # Live mic streaming ("listen mode"): baby pi -> parent pi, Opus over RTP.
 LISTEN_ALSA_DEVICE = os.environ.get("CG_LISTEN_ALSA_DEVICE", "plughw:2,0")
@@ -480,6 +483,78 @@ def update_config():
     })
 
 
+def _start_cry_detector():
+    """Spawn the cry detector as a managed subprocess (idempotent)."""
+    global cry_detector_process
+    if cry_detector_process and cry_detector_process.poll() is None:
+        return
+    try:
+        logger.info(f"Starting cry detector: {' '.join(CRY_DETECTOR_CMD)}")
+        cry_detector_process = subprocess.Popen(
+            CRY_DETECTOR_CMD,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid,
+        )
+    except Exception as e:
+        logger.error(f"Failed to start cry detector: {e}")
+        cry_detector_process = None
+
+
+def _stop_cry_detector():
+    """Kill the cry detector (idempotent)."""
+    global cry_detector_process
+    if not cry_detector_process or cry_detector_process.poll() is not None:
+        cry_detector_process = None
+        return
+    try:
+        logger.info(f"Stopping cry detector (PID: {cry_detector_process.pid})")
+        os.killpg(os.getpgid(cry_detector_process.pid), signal.SIGTERM)
+        try:
+            cry_detector_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(cry_detector_process.pid), signal.SIGKILL)
+            cry_detector_process.wait()
+    except Exception as e:
+        logger.error(f"Failed to stop cry detector: {e}")
+    cry_detector_process = None
+
+
+def read_last_cry_state():
+    """Tail the shared events file and return the most recent cry state.
+    Only cry_* events are considered; the wetness detector's events are
+    skipped. Returns 'crying' | 'none'."""
+    result = {'state': 'none', 'event_type': '', 'ts': '', 'db': 0.0, 'cry_ratio': 0.0, 'source': EVENTS_FILE}
+    try:
+        with open(EVENTS_FILE, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            chunk = min(size, 16384)
+            f.seek(size - chunk, 0)
+            tail = f.read().decode('utf-8', errors='ignore')
+        for line in reversed([ln for ln in tail.splitlines() if ln.strip()]):
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            et = ev.get('event_type', '')
+            if not et.startswith('cry_'):
+                continue
+            st = ev.get('state')
+            if st in ('none', 'crying'):
+                result['state'] = st
+                result['event_type'] = et
+                result['ts'] = ev.get('ts', '')
+                result['db'] = ev.get('db', 0.0)
+                result['cry_ratio'] = ev.get('cry_ratio', 0.0)
+                return result
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"cry_status read error: {e}")
+    return result
+
+
 def read_last_wet_state():
     """Tail the lepton monitor's JSONL events file and return the most recent
     wet state ('none' | 'cold' | 'warm'). Falls back to 'none' if the file is
@@ -516,6 +591,12 @@ def wet_status():
     return jsonify(read_last_wet_state())
 
 
+@app.route('/api/cry_status', methods=['GET'])
+def cry_status():
+    """Return latest cry state read from the shared events log."""
+    return jsonify(read_last_cry_state())
+
+
 def build_listen_pipeline(target_ip, target_port):
     """gst-launch pipeline that captures from the reSpeaker Lite, encodes Opus
     at voice bitrate, and sends RTP to the parent pi."""
@@ -549,6 +630,9 @@ def listen_start():
             'parent_ip': target_ip,
             'parent_port': target_port,
         })
+
+    # Cry detector holds the mic; free it before we start streaming.
+    _stop_cry_detector()
 
     cmd = build_listen_pipeline(target_ip, target_port)
     try:
@@ -586,6 +670,9 @@ def listen_stop():
             os.killpg(os.getpgid(listen_process.pid), signal.SIGKILL)
             listen_process.wait()
         listen_process = None
+        # Resume cry detection now that the mic is free.
+        if AUTO_START_CRY:
+            _start_cry_detector()
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Failed to stop listen stream: {e}")
@@ -615,4 +702,6 @@ if __name__ == '__main__':
     # Run on all interfaces, port 8000
     logger.info("Starting camera control server on port 8000")
     start_camera_stream_autostart()
+    if AUTO_START_CRY:
+        _start_cry_detector()
     app.run(host='0.0.0.0', port=8000, debug=False)
