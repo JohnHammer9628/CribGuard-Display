@@ -12,6 +12,8 @@ void baby_pi_start_camera();
 void baby_pi_stop_camera();
 bool baby_pi_check_status();
 bool baby_pi_get_wet_status(std::string& out_state);
+bool baby_pi_listen_start();
+bool baby_pi_listen_stop();
 
 void baby_pi_record_audio(int seconds);
 

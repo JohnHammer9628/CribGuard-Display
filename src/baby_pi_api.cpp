@@ -260,6 +260,34 @@ bool baby_pi_get_wet_status(std::string& out_state) {
     return false;
 }
 
+// Start the baby pi's mic-to-parent-pi audio stream (listen mode).
+bool baby_pi_listen_start() {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/listen/start";
+    std::string response;
+    log_line("[LISTEN] start");
+    if (http_post(url, "{}", response)) {
+        log_line((std::string("[LISTEN] Baby Pi response: ") + response).c_str());
+        return response.find("\"success\": true") != std::string::npos ||
+               response.find("\"success\":true") != std::string::npos;
+    }
+    log_line("[LISTEN] ERROR: failed to start listen on Baby Pi");
+    return false;
+}
+
+// Stop the baby pi's mic stream.
+bool baby_pi_listen_stop() {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/listen/stop";
+    std::string response;
+    log_line("[LISTEN] stop");
+    if (http_post(url, "{}", response)) {
+        log_line((std::string("[LISTEN] Baby Pi response: ") + response).c_str());
+        return response.find("\"success\": true") != std::string::npos ||
+               response.find("\"success\":true") != std::string::npos;
+    }
+    log_line("[LISTEN] ERROR: failed to stop listen on Baby Pi");
+    return false;
+}
+
 // Health check endpoint used to verify Baby Pi is reachable.
 bool baby_pi_check_status() {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/status";
@@ -285,6 +313,8 @@ void baby_pi_start_camera() { curl_unavailable("start_camera"); }
 void baby_pi_stop_camera() { curl_unavailable("stop_camera"); }
 bool baby_pi_check_status() { curl_unavailable("check_status"); return false; }
 bool baby_pi_get_wet_status(std::string& out_state) { out_state = "none"; curl_unavailable("wet_status"); return false; }
+bool baby_pi_listen_start() { curl_unavailable("listen_start"); return false; }
+bool baby_pi_listen_stop() { curl_unavailable("listen_stop"); return false; }
 void baby_pi_record_audio(int) { curl_unavailable("record_audio"); }
 bool baby_pi_list_lullabies(std::vector<std::string>& out_files) { out_files.clear(); curl_unavailable("list_lullabies"); return false; }
 void baby_pi_play_lullaby(const std::string&) { curl_unavailable("play_lullaby"); }

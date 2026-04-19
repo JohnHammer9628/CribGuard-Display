@@ -16,6 +16,7 @@
 
 #include "ui/camera.h"
 #include "ui/library.h"
+#include "ui/listen.h"
 #include "ui/lullabies.h"
 #include "ui/settings.h"
 
@@ -536,6 +537,18 @@ void build_main_screen() {
     style_button_pill(state::btn_theme);
     set_centered_button_label(state::btn_theme, "Dark");
     lv_obj_add_event_cb(state::btn_theme, on_top_theme_click, LV_EVENT_CLICKED, nullptr);
+
+    // Listen toggle button (mic streaming from baby pi -> parent pi speaker).
+    // Shares state with the Listen switch on the camera screen; either flips
+    // both. Styled as a pill so it reads as a toggle, not a nav button.
+    {
+        lv_obj_t* btn_listen = lv_btn_create(right_grp);
+        style_button_pill(btn_listen);
+        lv_obj_add_flag(btn_listen, LV_OBJ_FLAG_CHECKABLE);
+        set_centered_button_label(btn_listen, LV_SYMBOL_AUDIO " Listen");
+        lv_obj_add_event_cb(btn_listen, [](lv_event_t* /*e*/){ listen_toggle(); }, LV_EVENT_CLICKED, nullptr);
+        listen_register_widget(btn_listen);
+    }
 
     // Camera open button
     lv_obj_t* btn_cam = lv_btn_create(right_grp);

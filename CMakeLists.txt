@@ -115,6 +115,7 @@ add_executable(crib_guard_pi
   src/ui/lullabies.cpp
   src/ui/settings.cpp
   src/ui/camera.cpp
+  src/ui/listen.cpp
 )
 
 # Include paths you commonly use

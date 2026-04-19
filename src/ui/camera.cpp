@@ -14,6 +14,7 @@
 #include "logging.h"
 
 #include "ui/common.h"
+#include "ui/listen.h"
 
 #include <atomic>
 #include <cstring>
@@ -36,7 +37,6 @@ static lv_obj_t* g_cam_meta_label = nullptr;
 static lv_obj_t* g_cam_sw_mute = nullptr;
 static lv_obj_t* g_cam_controls_row = nullptr;
 
-static bool g_cam_muted = false;
 static lv_timer_t* g_cam_spinner_timer = nullptr;
 static std::atomic<bool> g_cam_start_worker_running{false};
 
@@ -179,21 +179,18 @@ static void on_cam_snapshot(lv_event_t* /*e*/) {
     // No-op for now; integrate capture once streaming is wired
 }
 
-// Toggle "mute" state (currently UI-only).
-static void on_cam_mute_toggle(lv_event_t* e) {
-    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-    g_cam_muted = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    log_line(g_cam_muted ? "[UI] camera muted" : "[UI] camera unmuted");
-    apply_camera_ui_state();
+// Fires when the user taps the Listen switch on the camera screen. We
+// delegate to the shared listen module so the home-screen button stays in
+// sync. The widget's visual state is driven by the shared module, so we
+// don't toggle the switch ourselves here.
+static void on_cam_listen_toggle(lv_event_t* /*e*/) {
+    listen_toggle();
 }
 
-// Apply UI state to widgets (labels, layout, mute toggle).
+// Apply UI state to widgets (labels, layout). The listen-mode switch is
+// driven by the shared listen module, so we don't touch its checked state
+// here.
 static void apply_camera_ui_state() {
-    // Update mute switch visual state
-    if (g_cam_sw_mute) {
-        if (g_cam_muted) lv_obj_add_state(g_cam_sw_mute, LV_STATE_CHECKED);
-        else lv_obj_clear_state(g_cam_sw_mute, LV_STATE_CHECKED);
-    }
     // Always-on showcase mode uses LIVE state.
     if (g_cam_live_label) {
         lv_label_set_text(g_cam_live_label, "LIVE");
@@ -331,12 +328,17 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_set_flex_flow(row_ctrls, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(row_ctrls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // mute switch + label
-    g_cam_sw_mute = lv_switch_create(row_ctrls);
-    if (g_cam_muted) lv_obj_add_state(g_cam_sw_mute, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(g_cam_sw_mute, on_cam_mute_toggle, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(g_cam_sw_mute, on_cam_mute_toggle, LV_EVENT_CLICKED, nullptr);
-    { lv_obj_t* lbl = lv_label_create(row_ctrls); lv_label_set_text(lbl, "Mute"); }
+    // Listen toggle (was the "Mute" switch before — repurposed since the old
+    // mute widget was a UI-only placeholder). Styled as a checkable pill to
+    // match the home-screen Listen button and give the toggle a visible text
+    // identity instead of a bare switch. State is shared with the home
+    // screen via the listen module.
+    g_cam_sw_mute = lv_btn_create(row_ctrls);
+    style_button_pill(g_cam_sw_mute);
+    lv_obj_add_flag(g_cam_sw_mute, LV_OBJ_FLAG_CHECKABLE);
+    set_centered_button_label(g_cam_sw_mute, LV_SYMBOL_AUDIO " Listen");
+    lv_obj_add_event_cb(g_cam_sw_mute, on_cam_listen_toggle, LV_EVENT_CLICKED, nullptr);
+    listen_register_widget(g_cam_sw_mute);
 
     log_line("[UI] camera opened");
     apply_camera_ui_state();
