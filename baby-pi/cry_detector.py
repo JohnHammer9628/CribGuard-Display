@@ -55,15 +55,22 @@ CHUNK_MS = 100
 LOUDNESS_THRESHOLD_DB = -30.0
 
 # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
-CRY_BAND_LOW_HZ = 400          # baby cry fundamental + harmonics start here
-CRY_BAND_HIGH_HZ = 3000
-VOICE_BAND_HIGH_HZ = 300       # adult-voice low end dominates below this
-NOISE_BAND_LOW_HZ = 5000       # appliance / broadband noise lives above this
+# Tuned to skip the overlap zone with adult voice:
+#   Adult male fundamental  ~85-180 Hz
+#   Adult female fundamental ~165-255 Hz
+#   Their harmonics extend to ~400-700 Hz and can leak higher
+#   Baby cry fundamental + strong harmonics ~600-2500 Hz
+# Starting the cry band at 800 Hz excludes most adult-voice harmonic energy
+# while still capturing where baby cries are loud.
+CRY_BAND_LOW_HZ = 800
+CRY_BAND_HIGH_HZ = 2800
+VOICE_BAND_HIGH_HZ = 500       # adult-voice fundamentals + low harmonics live below this
+NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 
 # Required cry_band_energy / (voice_band_energy + noise_band_energy).
-#   Raise (e.g. 5.0) -> only clearly cry-shaped spectra trigger
-#   Lower (e.g. 1.5) -> triggers on anything loud with high-freq content
-CRY_RATIO_MIN = 2.0
+#   Raise (e.g. 8.0) -> only clearly cry-shaped spectra trigger
+#   Lower (e.g. 2.0) -> triggers on anything loud with high-freq content (voice consonants can pass)
+CRY_RATIO_MIN = 5.0
 
 # Score-based persistence, tolerant of the natural breath gaps inside a real
 # baby cry (cry -> inhale -> cry -> inhale...). A cry-shaped chunk adds
