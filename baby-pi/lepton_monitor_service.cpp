@@ -1,4 +1,11 @@
 #include <libuvc/libuvc.h>
+
+// PureThermal's libuvc fork names the 16-bit raw thermal format `Y16`; upstream
+// libuvc (Debian/Ubuntu) calls the identical format `GRAY16`. Fall back so the
+// same source builds against either header.
+#ifndef UVC_FRAME_FORMAT_Y16
+#define UVC_FRAME_FORMAT_Y16 UVC_FRAME_FORMAT_GRAY16
+#endif
 #include <opencv2/opencv.hpp>
 #include <zmq.h>
 
@@ -279,10 +286,17 @@ class RtpOut {
     bool open(const StreamCfg& c, int fps) {
         if (!c.enable_rtp) return true;
         size_ = cv::Size(std::max(2, c.out_width), std::max(2, c.out_height));
+        // openh264enc is the encoder available on the baby pi (x264enc lives in
+        // gstreamer1.0-plugins-ugly which isn't installed). openh264enc takes
+        // bitrate in bits/sec (not kbps) and requires a framerate in caps to
+        // init; without it the encoder raises cmInitParaError and emits no
+        // frames. Force the caps here to match the appsrc's actual fps.
         std::string pipe =
-            "appsrc is-live=true block=true format=time do-timestamp=true ! videoconvert ! "
-            "x264enc tune=zerolatency bitrate=" + std::to_string(c.bitrate_kbps) +
-            " speed-preset=ultrafast key-int-max=15 ! rtph264pay pt=96 config-interval=1 ! udpsink host=" +
+            "appsrc is-live=true format=time do-timestamp=true ! "
+            "videoconvert ! "
+            "video/x-raw,format=I420,framerate=" + std::to_string(std::max(1, fps)) + "/1 ! "
+            "openh264enc bitrate=" + std::to_string(c.bitrate_kbps * 1000) +
+            " complexity=low ! rtph264pay pt=96 config-interval=1 ! udpsink host=" +
             c.parent_ip + " port=" + std::to_string(c.rtp_port) + " sync=false async=false";
         w_.open(pipe, cv::CAP_GSTREAMER, 0, std::max(1, fps), size_, true);
         if (!w_.isOpened()) {
