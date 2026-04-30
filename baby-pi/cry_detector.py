@@ -52,7 +52,12 @@ CHUNK_MS = 100
 # Loudness gate (in dBFS — 0 = clipping, -60 = very quiet room tone).
 #   Raise toward 0  -> fewer false triggers from soft noises
 #   Lower toward -40 -> catches softer cries but more sensitive overall
-LOUDNESS_THRESHOLD_DB = -30.0
+# Tuned 2026-04 for showcase: real cries from a baby right next to the mic in
+# the crib hit -10 to -22 dB. Showcase-room music reaches the mic at -25 to -40,
+# even when audible to humans. -20 sits in the gap and rejects the kind of
+# vocal-heavy music that is otherwise spectrally indistinguishable from a cry.
+# If the mic is moved further from the crib, lower this back toward -28.
+LOUDNESS_THRESHOLD_DB = -22.0
 
 # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
 # Tuned to skip the overlap zone with adult voice:
@@ -72,6 +77,19 @@ NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 #   Lower (e.g. 2.0) -> triggers on anything loud with high-freq content (voice consonants can pass)
 CRY_RATIO_MIN = 5.0
 
+# Spectral flatness gate (Wiener entropy) measured INSIDE the cry band.
+# Definition: geometric_mean(power) / arithmetic_mean(power), in [0, 1].
+#   ~0.01-0.05 -> pure tone (single peak)
+#   ~0.05-0.20 -> baby cry (fundamental + a few strong harmonics)
+#   ~0.30-0.60 -> music with multiple instruments / vocals
+#   ~0.80-1.00 -> white noise
+# Sounds with flatness ABOVE this threshold are rejected as "too broadband to be a cry"
+# even if they are loud and have lots of cry-band energy. This is what discriminates
+# music and ambient room sound from a real cry.
+#   Raise (e.g. 0.40) -> more permissive; some music can sneak through
+#   Lower (e.g. 0.20) -> stricter; only clean tonal cries pass (may miss noisy/distant cries)
+TONALITY_MAX = 0.30
+
 # Score-based persistence, tolerant of the natural breath gaps inside a real
 # baby cry (cry -> inhale -> cry -> inhale...). A cry-shaped chunk adds
 # SCORE_UP; a non-cry chunk subtracts SCORE_DOWN. The score is clamped to
@@ -90,10 +108,15 @@ CRY_RATIO_MIN = 5.0
 SCORE_UP = 3.0
 SCORE_DOWN_SILENT = 1.5        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
 SCORE_DOWN_LATCHED = 0.3       # decay during breath gaps inside a real cry (audible background, just not cry-like right now)
-SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent — stops false positives from lingering
+SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. Kept moderate so the score can
+                               # accumulate across the breath gaps inside a real cry, where the chunks between
+                               # bursts are quieter than the loudness gate but still close in time. The loudness
+                               # gate at -22 dB does the music-rejection work; this decay rate just shapes how
+                               # forgiving the persistence model is to gaps within real crying.
 SILENT_DB = -50.0              # below this, the room is "silent"; above it, there's still some audible activity
 SCORE_MAX = 60.0               # cap so post-cry drain doesn't take forever (was 100)
-ENTER_SCORE = 30.0             # cross this while idle -> latch "crying"
+ENTER_SCORE = 45.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+                               # required, harder for brief music passages to trip a false alert.
 EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # With these numbers, from SCORE_MAX after silence (db < -50):
 #   decay at 15/sec -> reaches EXIT_SCORE in ~3 seconds.
@@ -117,7 +140,10 @@ FLASK_URL = os.environ.get("CG_FLASK_URL", "http://127.0.0.1:8000")
 LULLABY_DEVICE = os.environ.get("CG_LULLABY_DEVICE", ALSA_DEVICE)
 
 # One "status" line is appended every N analysis chunks (pure debug telemetry).
+# Set CG_CRY_DEBUG_RAW=1 to also emit every chunk's features (very chatty, only
+# for tuning sessions — disable in production).
 STATUS_EVERY_N_CHUNKS = 30  # ~3 s at 100 ms chunks
+DEBUG_RAW_CHUNKS = os.environ.get("CG_CRY_DEBUG_RAW", "0").strip().lower() not in ("0", "false", "no")
 
 # =============================================================================
 
@@ -136,7 +162,7 @@ def iso_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0):
+def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0):
     rec = {
         "ts": iso_now(),
         "event_type": event_type,
@@ -144,6 +170,7 @@ def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0):
         "reason": reason,
         "db": float(round(db, 2)),
         "cry_ratio": float(round(cry_ratio, 3)),
+        "flatness": float(round(flatness, 3)),
         "score": float(round(score, 1)),
     }
     line = json.dumps(rec)
@@ -220,18 +247,30 @@ def rms_db(samples_f32):
     return 20.0 * np.log10(rms / 32768.0)
 
 
-def cry_ratio(samples_f32):
+def cry_features(samples_f32):
     # Window to reduce spectral leakage, then real FFT for power spectrum.
     window = np.hanning(len(samples_f32))
     spectrum = np.abs(np.fft.rfft(samples_f32 * window))
     freqs = np.fft.rfftfreq(len(samples_f32), 1.0 / SAMPLE_RATE)
     power = spectrum * spectrum
 
-    cry = float(np.sum(power[(freqs >= CRY_BAND_LOW_HZ) & (freqs <= CRY_BAND_HIGH_HZ)]))
+    cry_mask = (freqs >= CRY_BAND_LOW_HZ) & (freqs <= CRY_BAND_HIGH_HZ)
+    cry_power = power[cry_mask]
+
+    cry = float(np.sum(cry_power))
     voice = float(np.sum(power[freqs < VOICE_BAND_HIGH_HZ]))
     noise = float(np.sum(power[freqs > NOISE_BAND_LOW_HZ]))
     denom = max(1.0, voice + noise)
-    return cry / denom
+    ratio = cry / denom
+
+    # Spectral flatness inside the cry band. Tonal signal -> near 0; broadband -> near 1.
+    # Floor the bins so log(0) doesn't blow up on a quiet band.
+    cp = np.maximum(cry_power, 1e-10)
+    arith = float(np.mean(cp))
+    geo = float(np.exp(np.mean(np.log(cp))))
+    flatness = geo / arith if arith > 0 else 1.0
+
+    return ratio, flatness
 
 
 def run():
@@ -267,8 +306,15 @@ def run():
 
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             db = rms_db(samples)
-            ratio = cry_ratio(samples)
-            is_cry_now = db >= LOUDNESS_THRESHOLD_DB and ratio >= CRY_RATIO_MIN
+            ratio, flatness = cry_features(samples)
+            is_cry_now = (
+                db >= LOUDNESS_THRESHOLD_DB
+                and ratio >= CRY_RATIO_MIN
+                and flatness <= TONALITY_MAX
+            )
+            if DEBUG_RAW_CHUNKS:
+                emit("cry_chunk", latched, "raw" if not is_cry_now else "cry_passes",
+                     db, ratio, score, flatness)
 
             # Score evolves every chunk; this is the whole "persistence" idea.
             # Three decay regimes distinguish "baby paused for breath"
@@ -287,13 +333,13 @@ def run():
 
             if latched == "none" and score >= ENTER_SCORE:
                 latched = "crying"
-                emit("cry_alert", "crying", "score_enter", db, ratio, score)
+                emit("cry_alert", "crying", "score_enter", db, ratio, score, flatness)
                 start_lullaby(lullaby_index)
                 lullaby_stop_at = None  # cancel any scheduled stop
             elif latched == "crying":
                 if score < EXIT_SCORE:
                     latched = "none"
-                    emit("cry_clear", "none", "score_exit", db, ratio, score)
+                    emit("cry_clear", "none", "score_exit", db, ratio, score, flatness)
                     lullaby_stop_at = now + POST_CRY_TAIL_SEC
                 else:
                     # Still accumulating / still crying; cancel any pending stop.
@@ -305,13 +351,13 @@ def run():
 
             chunks += 1
             if chunks % STATUS_EVERY_N_CHUNKS == 0:
-                # Report the current score alongside db/ratio so thresholds
+                # Report the current score alongside db/ratio/flatness so thresholds
                 # can be tuned against real recorded data.
                 if latched == "none":
                     reason = "building" if score > 0 else "stable"
                 else:
                     reason = "tailing" if score < ENTER_SCORE else "stable"
-                emit("cry_status", latched, reason, db, ratio, score)
+                emit("cry_status", latched, reason, db, ratio, score, flatness)
     finally:
         try:
             arecord.terminate()
