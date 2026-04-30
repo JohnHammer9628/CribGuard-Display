@@ -350,8 +350,10 @@ static void update_dashboard() {
     // Determine status color and apply to hero ring
     const char* st = state::lbl_status ? lv_label_get_text(state::lbl_status) : "Calm";
     lv_color_t ring = lv_color_hex(0x22AA22);
-    if (st && std::strcmp(st, "Cry") == 0)          ring = lv_color_hex(0xCC2222);
-    else if (st && std::strcmp(st, "Motion") == 0)  ring = lv_color_hex(0xD08770);
+    if (st && (std::strcmp(st, "Cry") == 0 || std::strcmp(st, "Crying") == 0))
+        ring = lv_color_hex(0xCC2222);
+    else if (st && std::strcmp(st, "Motion") == 0)
+        ring = lv_color_hex(0xD08770);
     if (state::dash_ring) {
         lv_obj_set_style_bg_opa(state::dash_ring, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(state::dash_ring, 10, 0);
