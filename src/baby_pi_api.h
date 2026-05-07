@@ -13,6 +13,11 @@ void baby_pi_stop_camera();
 bool baby_pi_check_status();
 bool baby_pi_get_wet_status(std::string& out_state);
 bool baby_pi_get_cry_status(std::string& out_state);
+
+// Get/set the wet detector's ROI box (raw pixels in the 160x120 frame).
+// Set returns true only when the detector was hot-swapped via SIGHUP.
+bool baby_pi_get_wet_roi(int& x_start, int& y_start, int& x_end, int& y_end);
+bool baby_pi_set_wet_roi(int x_start, int y_start, int x_end, int y_end);
 bool baby_pi_listen_start();
 bool baby_pi_listen_stop();
 

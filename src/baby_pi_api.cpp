@@ -285,6 +285,64 @@ bool baby_pi_get_cry_status(std::string& out_state) {
     return false;
 }
 
+// Pull a number out of {"key": <int>, ...} JSON. Returns true on success.
+// Tolerates whitespace and signs; not a real parser, just enough for our
+// fixed-shape responses.
+static bool parse_int_field(const std::string& body, const char* key, int& out) {
+    std::string needle = std::string("\"") + key + "\"";
+    size_t k = body.find(needle);
+    if (k == std::string::npos) return false;
+    size_t colon = body.find(':', k);
+    if (colon == std::string::npos) return false;
+    size_t i = colon + 1;
+    while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) ++i;
+    bool neg = false;
+    if (i < body.size() && (body[i] == '+' || body[i] == '-')) {
+        neg = (body[i] == '-');
+        ++i;
+    }
+    if (i >= body.size() || body[i] < '0' || body[i] > '9') return false;
+    int v = 0;
+    while (i < body.size() && body[i] >= '0' && body[i] <= '9') {
+        v = v * 10 + (body[i] - '0');
+        ++i;
+    }
+    out = neg ? -v : v;
+    return true;
+}
+
+// Fetch the persisted ROI box from the Baby Pi.
+bool baby_pi_get_wet_roi(int& x_start, int& y_start, int& x_end, int& y_end) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/wet_roi";
+    std::string response;
+    if (!http_get(url, response)) return false;
+    int xs, ys, xe, ye;
+    if (!parse_int_field(response, "x_start", xs)) return false;
+    if (!parse_int_field(response, "y_start", ys)) return false;
+    if (!parse_int_field(response, "x_end",   xe)) return false;
+    if (!parse_int_field(response, "y_end",   ye)) return false;
+    x_start = xs; y_start = ys; x_end = xe; y_end = ye;
+    return true;
+}
+
+// Persist a new ROI box on the Baby Pi. The detector is SIGHUP'd to reload.
+// Returns true if the request succeeded AND the detector was reachable.
+bool baby_pi_set_wet_roi(int x_start, int y_start, int x_end, int y_end) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/wet_roi";
+    std::string json = "{\"x_start\":" + std::to_string(x_start) +
+                       ",\"y_start\":" + std::to_string(y_start) +
+                       ",\"x_end\":"   + std::to_string(x_end)   +
+                       ",\"y_end\":"   + std::to_string(y_end)   + "}";
+    std::string response;
+    log_line((std::string("[ROI] set: ") + json).c_str());
+    if (!http_post(url, json, response)) return false;
+    log_line((std::string("[ROI] Baby Pi response: ") + response).c_str());
+    // success:true is enough to consider the persistence step done; reloaded
+    // can be false if the camera isn't currently streaming, which is fine.
+    return response.find("\"success\": true") != std::string::npos ||
+           response.find("\"success\":true") != std::string::npos;
+}
+
 // Start the baby pi's mic-to-parent-pi audio stream (listen mode).
 bool baby_pi_listen_start() {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/listen/start";
@@ -339,6 +397,8 @@ void baby_pi_stop_camera() { curl_unavailable("stop_camera"); }
 bool baby_pi_check_status() { curl_unavailable("check_status"); return false; }
 bool baby_pi_get_wet_status(std::string& out_state) { out_state = "none"; curl_unavailable("wet_status"); return false; }
 bool baby_pi_get_cry_status(std::string& out_state) { out_state = "none"; curl_unavailable("cry_status"); return false; }
+bool baby_pi_get_wet_roi(int&, int&, int&, int&) { curl_unavailable("get_wet_roi"); return false; }
+bool baby_pi_set_wet_roi(int, int, int, int) { curl_unavailable("set_wet_roi"); return false; }
 bool baby_pi_listen_start() { curl_unavailable("listen_start"); return false; }
 bool baby_pi_listen_stop() { curl_unavailable("listen_stop"); return false; }
 void baby_pi_record_audio(int) { curl_unavailable("record_audio"); }
