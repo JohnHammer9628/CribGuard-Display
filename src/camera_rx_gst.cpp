@@ -276,6 +276,7 @@ void start_gstreamer_receiver() {
         " caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" ! "
         "rtph264depay ! h264parse ! "
         "avdec_h264 ! "
+        "videoflip method=rotate-180 ! "
         "videoconvert ! "
         "video/x-raw,format=BGRx ! "
         "appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true";
