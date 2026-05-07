@@ -21,6 +21,7 @@ Intentionally uses only the stdlib + numpy — no cv2, no gst-python bindings.
 
 import json
 import os
+import signal
 import socket
 import sys
 import time
@@ -35,6 +36,8 @@ FRAME_SIZE = WIDTH * HEIGHT * BYTES_PER_PIXEL
 EVENTS_FILE = os.environ.get("CG_EVENTS_FILE", "/tmp/crib_monitor_events.jsonl")
 LISTEN_HOST = os.environ.get("CG_DETECTOR_LISTEN_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("CG_DETECTOR_LISTEN_PORT", "5556"))
+ROI_CONFIG_FILE = os.environ.get("CG_ROI_CONFIG_FILE", "/home/jammin/wet_roi.json")
+PID_FILE = os.environ.get("CG_DETECTOR_PID_FILE", "/tmp/lepton_detector.pid")
 
 # =============================================================================
 # DETECTION TUNING KNOBS
@@ -53,34 +56,84 @@ LISTEN_PORT = int(os.environ.get("CG_DETECTOR_LISTEN_PORT", "5556"))
 
 # Region-of-interest (ROI) inside the 160x120 frame, in raw pixels. Only
 # pixels inside this box are analysed for wetness; everything outside is
-# ignored. Use this to exclude parts of the scene that aren't the diaper
-# area (the baby's head, the crib bars, etc.).
+# ignored. The ROI is reload-able at runtime: send SIGHUP to the detector
+# (Flask does this when the parent UI saves a new ROI) and the new box
+# applies on the next frame without restarting the streamer.
 #
-# Env vars (read at startup, override the defaults below):
-#   CG_WET_X_START   left edge,   px, [0, 160).  Default 80  (skip left half)
-#   CG_WET_Y_START   top edge,    px, [0, 120).  Default 0   (start at top)
-#   CG_WET_X_END     right edge,  px, (start, 160]. Default 160
-#   CG_WET_Y_END     bottom edge, px, (start, 120]. Default 120
+# Resolution order (highest priority first):
+#   1. JSON config file at ROI_CONFIG_FILE  (written by /api/wet_roi POST)
+#   2. Env vars CG_WET_X_START / Y_START / X_END / Y_END
+#   3. Hard-coded defaults below (right half of frame, full height)
 #
-# Set them in start_camera_with_detector.sh (or in the systemd unit's
-# Environment= directives) and restart cribguard-camera. The detector logs
-# the resolved ROI on startup so you can verify which box is in effect.
-def _roi_from_env(name, default, max_val):
-    try:
-        v = int(os.environ.get(name, default))
-    except ValueError:
-        v = default
-    return max(0, min(v, max_val))
+# We keep the active ROI in a small mutable dict so the SIGHUP reload path
+# can swap it atomically — the main loop reads roi_state["x_start"] etc.,
+# gets a consistent box even mid-frame.
+roi_state = {
+    "x_start": 80,
+    "y_start": 0,
+    "x_end":   WIDTH,
+    "y_end":   HEIGHT,
+    "enter_area": 0,  # populated by _apply_roi below ENTER_PCT/EXIT_PCT defs
+    "exit_area":  0,
+}
 
-WET_X_START = _roi_from_env("CG_WET_X_START", 80,  WIDTH)
-WET_Y_START = _roi_from_env("CG_WET_Y_START", 0,   HEIGHT)
-WET_X_END   = _roi_from_env("CG_WET_X_END",   WIDTH,  WIDTH)
-WET_Y_END   = _roi_from_env("CG_WET_Y_END",   HEIGHT, HEIGHT)
-# Guarantee a non-empty box even if user sets end <= start by mistake.
-if WET_X_END <= WET_X_START:
-    WET_X_END = min(WET_X_START + 1, WIDTH)
-if WET_Y_END <= WET_Y_START:
-    WET_Y_END = min(WET_Y_START + 1, HEIGHT)
+
+def _clamp_int(v, lo, hi):
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return lo
+    return max(lo, min(v, hi))
+
+
+def _resolve_roi():
+    """Pick the ROI from (config file | env vars | defaults), in that order."""
+    x_s, y_s, x_e, y_e = 80, 0, WIDTH, HEIGHT
+    # Env vars first (lowest priority above defaults).
+    x_s = _clamp_int(os.environ.get("CG_WET_X_START", x_s), 0, WIDTH - 1)
+    y_s = _clamp_int(os.environ.get("CG_WET_Y_START", y_s), 0, HEIGHT - 1)
+    x_e = _clamp_int(os.environ.get("CG_WET_X_END",   x_e), 1, WIDTH)
+    y_e = _clamp_int(os.environ.get("CG_WET_Y_END",   y_e), 1, HEIGHT)
+    # Config file overrides env if present and parseable.
+    try:
+        with open(ROI_CONFIG_FILE, "r") as f:
+            cfg = json.load(f)
+        x_s = _clamp_int(cfg.get("x_start", x_s), 0, WIDTH - 1)
+        y_s = _clamp_int(cfg.get("y_start", y_s), 0, HEIGHT - 1)
+        x_e = _clamp_int(cfg.get("x_end",   x_e), 1, WIDTH)
+        y_e = _clamp_int(cfg.get("y_end",   y_e), 1, HEIGHT)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    # Guarantee a non-empty box.
+    if x_e <= x_s:
+        x_e = min(x_s + 1, WIDTH)
+    if y_e <= y_s:
+        y_e = min(y_s + 1, HEIGHT)
+    return x_s, y_s, x_e, y_e
+
+
+def _apply_roi(x_s, y_s, x_e, y_e):
+    """Update roi_state. Computes absolute pixel thresholds from ENTER_PCT /
+    EXIT_PCT so the area gate scales with the ROI's actual size."""
+    area = max((x_e - x_s) * (y_e - y_s), 1)
+    roi_state["x_start"] = x_s
+    roi_state["y_start"] = y_s
+    roi_state["x_end"]   = x_e
+    roi_state["y_end"]   = y_e
+    roi_state["enter_area"] = max(int(area * ENTER_PCT), 1)
+    roi_state["exit_area"]  = max(int(area * EXIT_PCT),  1)
+
+
+def reload_roi():
+    """Re-read ROI from sources and rebuild the area thresholds. Safe to call
+    from a signal handler — only mutates roi_state, no I/O on shared sockets."""
+    x_s, y_s, x_e, y_e = _resolve_roi()
+    old = (roi_state["x_start"], roi_state["y_start"], roi_state["x_end"], roi_state["y_end"])
+    _apply_roi(x_s, y_s, x_e, y_e)
+    print(f"[INFO] ROI reload: {old} -> ({x_s},{y_s},{x_e},{y_e}) "
+          f"area={roi_state['x_end'] - roi_state['x_start']}x{roi_state['y_end'] - roi_state['y_start']} "
+          f"enter={roi_state['enter_area']} exit={roi_state['exit_area']}", flush=True)
+
 
 # How fast the "dry baseline" image adapts to the current scene, per frame.
 # Only applied during fully idle periods (no pending signal, no latched
@@ -108,19 +161,24 @@ BASELINE_ALPHA = 0.02
 COLD_DELTA = -100.0
 WARM_DELTA = 100.0
 
-# How many pixels-over-threshold are required to LATCH a new alert.
-# Together with ENTER_AREA, this is the primary "am I wet?" gate.
-#   - Raise (e.g. 2500) -> harder to trigger, fewer false positives
-#   - Lower (e.g. 1200) -> triggers on smaller wet patches
-# If you can see wet_alert firing on a status line where cold_area is around N,
-# set ENTER_AREA a bit above N to suppress that class of false alert.
-ENTER_AREA = 1800
+# Fraction of the ROI that must be over the delta threshold to LATCH a new
+# alert. Stored as a percentage of ROI area so the same setting works across
+# different ROI sizes (when the user resizes the ROI from the parent UI, the
+# absolute pixel threshold rescales automatically). Combined with COLD_DELTA
+# / WARM_DELTA, this is the primary "am I wet?" gate.
+#   - Raise (e.g. 0.25) -> harder to trigger, fewer false positives
+#   - Lower (e.g. 0.12) -> triggers on smaller wet patches
+ENTER_PCT = 0.19
 
-# How many pixels-over-threshold are required to STAY latched once alerting.
-# Always <= ENTER_AREA (that's the hysteresis — easier to stay in state than to enter it).
-#   - Raise (e.g. 1200) -> alerts clear sooner when wetness shrinks
-#   - Lower (e.g. 500)  -> alerts hold even when the wet patch fades
-EXIT_AREA = 900
+# Fraction of the ROI that must remain over threshold to STAY latched.
+# Always <= ENTER_PCT (the hysteresis: easier to stay in state than to enter).
+#   - Raise (e.g. 0.13) -> alerts clear sooner when wetness shrinks
+#   - Lower (e.g. 0.05) -> alerts hold even when the wet patch fades
+EXIT_PCT = 0.094
+
+# Initial ROI load. Done here (after ENTER_PCT/EXIT_PCT are defined) so the
+# enter_area/exit_area in roi_state are populated before run() starts.
+_apply_roi(*_resolve_roi())
 
 # Dominance ratio: the winning channel (cold or warm) must be this much larger
 # than the other to latch/hold an alert. This rejects "both went up" events
@@ -177,9 +235,22 @@ def run():
     sock.bind((LISTEN_HOST, LISTEN_PORT))
     sock.settimeout(2.0)
 
+    # Pidfile so Flask can find this process and SIGHUP it for ROI reloads.
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError as e:
+        print(f"[WARN] could not write pidfile {PID_FILE}: {e}", flush=True)
+
+    # SIGHUP -> reload ROI from config file. Signal handlers run in the main
+    # thread between bytecode boundaries, so this is safe alongside the loop.
+    signal.signal(signal.SIGHUP, lambda *_: reload_roi())
+
     print(f"[INFO] listening udp://{LISTEN_HOST}:{LISTEN_PORT} frame={FRAME_SIZE}B", flush=True)
-    print(f"[INFO] ROI px: x=[{WET_X_START},{WET_X_END}) y=[{WET_Y_START},{WET_Y_END}) "
-          f"size={WET_X_END - WET_X_START}x{WET_Y_END - WET_Y_START}", flush=True)
+    print(f"[INFO] ROI px: x=[{roi_state['x_start']},{roi_state['x_end']}) "
+          f"y=[{roi_state['y_start']},{roi_state['y_end']}) "
+          f"size={roi_state['x_end'] - roi_state['x_start']}x{roi_state['y_end'] - roi_state['y_start']} "
+          f"enter={roi_state['enter_area']} exit={roi_state['exit_area']}", flush=True)
     emit("startup", "none", "service_start")
 
     baseline = None
@@ -194,6 +265,10 @@ def run():
             data, _ = sock.recvfrom(65536)
         except socket.timeout:
             continue
+        except InterruptedError:
+            # SIGHUP (or similar) interrupted recvfrom. Handler already ran;
+            # just loop and try again.
+            continue
         if not data:
             continue
 
@@ -206,7 +281,12 @@ def run():
             del buf[:FRAME_SIZE]
 
             frame = np.frombuffer(frame_bytes, dtype=np.uint16).reshape((HEIGHT, WIDTH)).astype(np.float32)
-            roi = frame[WET_Y_START:WET_Y_END, WET_X_START:WET_X_END]
+            # Snapshot ROI bounds for this frame so a SIGHUP mid-iteration
+            # doesn't half-apply the new box (baseline shape would mismatch).
+            x_s, y_s, x_e, y_e = roi_state["x_start"], roi_state["y_start"], roi_state["x_end"], roi_state["y_end"]
+            enter_area = roi_state["enter_area"]
+            exit_area  = roi_state["exit_area"]
+            roi = frame[y_s:y_e, x_s:x_e]
 
             if baseline is None or baseline.shape != roi.shape:
                 baseline = roi.copy()
@@ -232,9 +312,9 @@ def run():
             # side of the temperature delta, not both. The Lepton's colormap
             # rescales can briefly inflate both channels at once — those don't
             # count as a real alert.
-            if cold_area >= warm_area * DOMINANCE and cold_area >= (EXIT_AREA if latched == "cold" else ENTER_AREA):
+            if cold_area >= warm_area * DOMINANCE and cold_area >= (exit_area if latched == "cold" else enter_area):
                 observed = "cold"
-            elif warm_area >= cold_area * DOMINANCE and warm_area >= (EXIT_AREA if latched == "warm" else ENTER_AREA):
+            elif warm_area >= cold_area * DOMINANCE and warm_area >= (exit_area if latched == "warm" else enter_area):
                 observed = "warm"
             else:
                 observed = "none"
@@ -266,3 +346,8 @@ if __name__ == "__main__":
         run()
     except KeyboardInterrupt:
         emit("shutdown", "none", "service_stop")
+    finally:
+        try:
+            os.unlink(PID_FILE)
+        except OSError:
+            pass

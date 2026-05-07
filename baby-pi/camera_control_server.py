@@ -595,6 +595,80 @@ def wet_status():
     return jsonify(read_last_wet_state())
 
 
+# ROI configuration shared with lepton_detector.py. The detector reads this
+# file at startup and on SIGHUP; the parent UI's "Set ROI" tool POSTs here
+# to update the box without restarting the streamer.
+WET_ROI_CONFIG_FILE = '/home/jammin/wet_roi.json'
+WET_ROI_PID_FILE = '/tmp/lepton_detector.pid'
+WET_ROI_DEFAULTS = {'x_start': 80, 'y_start': 0, 'x_end': 160, 'y_end': 120}
+WET_ROI_FRAME_W = 160
+WET_ROI_FRAME_H = 120
+
+
+def _read_wet_roi():
+    roi = dict(WET_ROI_DEFAULTS)
+    try:
+        with open(WET_ROI_CONFIG_FILE, 'r') as f:
+            cfg = json.load(f)
+        for k in ('x_start', 'y_start', 'x_end', 'y_end'):
+            if k in cfg:
+                roi[k] = int(cfg[k])
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError, TypeError):
+        pass
+    return roi
+
+
+@app.route('/api/wet_roi', methods=['GET'])
+def get_wet_roi():
+    """Return the persisted wet-detector ROI box (raw pixels in 160x120 frame)."""
+    return jsonify(_read_wet_roi())
+
+
+@app.route('/api/wet_roi', methods=['POST'])
+def set_wet_roi():
+    """Persist a new ROI box and SIGHUP the detector so it reloads.
+
+    Body: {"x_start": int, "y_start": int, "x_end": int, "y_end": int}
+    All four must satisfy 0 <= start < end <= frame_max."""
+    body = request.get_json(silent=True) or {}
+    try:
+        x_s = int(body['x_start'])
+        y_s = int(body['y_start'])
+        x_e = int(body['x_end'])
+        y_e = int(body['y_end'])
+    except (KeyError, ValueError, TypeError):
+        return jsonify({'success': False, 'error': 'expected ints x_start/y_start/x_end/y_end'}), 400
+
+    # Clamp to frame bounds.
+    x_s = max(0, min(x_s, WET_ROI_FRAME_W - 1))
+    y_s = max(0, min(y_s, WET_ROI_FRAME_H - 1))
+    x_e = max(1, min(x_e, WET_ROI_FRAME_W))
+    y_e = max(1, min(y_e, WET_ROI_FRAME_H))
+    if x_e <= x_s or y_e <= y_s:
+        return jsonify({'success': False, 'error': 'end must be greater than start'}), 400
+
+    roi = {'x_start': x_s, 'y_start': y_s, 'x_end': x_e, 'y_end': y_e}
+    try:
+        with open(WET_ROI_CONFIG_FILE, 'w') as f:
+            json.dump(roi, f)
+            f.write('\n')
+    except OSError as e:
+        return jsonify({'success': False, 'error': f'write failed: {e}'}), 500
+
+    # SIGHUP the detector so it reloads without a streamer restart. If the
+    # pidfile is missing or stale we silently skip — the next detector start
+    # will pick up the new config from the file anyway.
+    try:
+        with open(WET_ROI_PID_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGHUP)
+        signaled = True
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError, OSError):
+        signaled = False
+
+    return jsonify({'success': True, 'roi': roi, 'reloaded': signaled})
+
+
 @app.route('/api/cry_status', methods=['GET'])
 def cry_status():
     """Return latest cry state read from the shared events log."""
