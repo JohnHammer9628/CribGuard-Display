@@ -572,6 +572,10 @@ def read_last_wet_state():
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            # Cry events share the events file and also use state="none";
+            # without this filter the wet endpoint mirrors cry_status.
+            if ev.get('event_type', '').startswith('cry_'):
+                continue
             st = ev.get('state')
             if st in ('none', 'cold', 'warm'):
                 result['state'] = st

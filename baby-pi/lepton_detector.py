@@ -51,41 +51,48 @@ LISTEN_PORT = int(os.environ.get("CG_DETECTOR_LISTEN_PORT", "5556"))
 # between your "wet" numbers and your "dry" numbers.
 # =============================================================================
 
-# Region-of-interest (ROI) crop inside the 160x120 frame. Only pixels inside
-# this ROI are analysed for wetness; everything outside is ignored. Use this
-# to exclude parts of the scene that aren't the diaper area (the baby's head,
-# the crib bars, etc.).
+# Region-of-interest (ROI) inside the 160x120 frame, in raw pixels. Only
+# pixels inside this box are analysed for wetness; everything outside is
+# ignored. Use this to exclude parts of the scene that aren't the diaper
+# area (the baby's head, the crib bars, etc.).
 #
-# WET_X_START = fraction of the WIDTH (160 px) where the ROI begins, measured
-# from the LEFT. 0.5 means "skip the left half, analyse the right half."
-# WET_Y_START = fraction of the HEIGHT (120 px) where the ROI begins, measured
-# from the TOP. 0.0 means "use the full vertical range."
+# Env vars (read at startup, override the defaults below):
+#   CG_WET_X_START   left edge,   px, [0, 160).  Default 80  (skip left half)
+#   CG_WET_Y_START   top edge,    px, [0, 120).  Default 0   (start at top)
+#   CG_WET_X_END     right edge,  px, (start, 160]. Default 160
+#   CG_WET_Y_END     bottom edge, px, (start, 120]. Default 120
 #
-# Examples:
-#   WET_X_START=0.5, WET_Y_START=0.0 -> right 50% of the frame, full height (80x120)
-#   WET_X_START=0.0, WET_Y_START=0.45 -> full width, bottom 55% (160x66)
-#   WET_X_START=0.5, WET_Y_START=0.3  -> right half, bottom 70% (80x84)
-#
-#   - Raise WET_X_START -> tighter to the right edge
-#   - Lower WET_X_START -> more of the frame included horizontally
-WET_X_START = 0.5
-WET_Y_START = 0.0
+# Set them in start_camera_with_detector.sh (or in the systemd unit's
+# Environment= directives) and restart cribguard-camera. The detector logs
+# the resolved ROI on startup so you can verify which box is in effect.
+def _roi_from_env(name, default, max_val):
+    try:
+        v = int(os.environ.get(name, default))
+    except ValueError:
+        v = default
+    return max(0, min(v, max_val))
 
-# How fast the "dry baseline" image adapts to the current scene, per frame,
-# when no alert is latched. Exponential moving average: new = (1-alpha)*old + alpha*current.
-#   - Higher (e.g. 0.05) -> baseline catches up faster; slow scene changes won't trigger
-#   - Lower  (e.g. 0.005) -> baseline is more stable; small real wetness shows up more strongly
-# If ambient temperature is drifting (e.g. room warming up) and causing false alerts,
-# raise this. If short wet events are being "absorbed" into the baseline before they
-# trigger, lower this.
+WET_X_START = _roi_from_env("CG_WET_X_START", 80,  WIDTH)
+WET_Y_START = _roi_from_env("CG_WET_Y_START", 0,   HEIGHT)
+WET_X_END   = _roi_from_env("CG_WET_X_END",   WIDTH,  WIDTH)
+WET_Y_END   = _roi_from_env("CG_WET_Y_END",   HEIGHT, HEIGHT)
+# Guarantee a non-empty box even if user sets end <= start by mistake.
+if WET_X_END <= WET_X_START:
+    WET_X_END = min(WET_X_START + 1, WIDTH)
+if WET_Y_END <= WET_Y_START:
+    WET_Y_END = min(WET_Y_START + 1, HEIGHT)
+
+# How fast the "dry baseline" image adapts to the current scene, per frame.
+# Only applied during fully idle periods (no pending signal, no latched
+# alert). EMA: new = (1-alpha)*old + alpha*current.
+#   - Higher (e.g. 0.05) -> baseline catches up faster; slow scene changes
+#     are absorbed before they can trigger.
+#   - Lower  (e.g. 0.005) -> baseline more stable; small real wetness shows
+#     up more strongly against it.
+# If ambient temperature drifts (room warming up) and that's causing false
+# alerts, raise this. If short wet events are being "absorbed" into the
+# baseline before they trigger, lower this.
 BASELINE_ALPHA = 0.02
-
-# Same EMA, but applied while an alert IS latched. Kept lower so the wet patch
-# doesn't get learned as "normal" and accidentally clear the alert.
-#   - Higher (e.g. 0.015) -> stuck alerts self-clear faster (good for demos)
-#   - Lower  (e.g. 0.001) -> alerts hold longer even if the wet patch becomes baseline
-# If the banner gets stuck ON after wetness is gone, raise this.
-BASELINE_ALPHA_LATCHED = 0.005
 
 # Per-pixel temperature delta to count a pixel as "cold" or "warm" vs. the
 # baseline. Units are Y16 raw counts. If the Lepton is in TLinear mode, 1 unit
@@ -171,6 +178,8 @@ def run():
     sock.settimeout(2.0)
 
     print(f"[INFO] listening udp://{LISTEN_HOST}:{LISTEN_PORT} frame={FRAME_SIZE}B", flush=True)
+    print(f"[INFO] ROI px: x=[{WET_X_START},{WET_X_END}) y=[{WET_Y_START},{WET_Y_END}) "
+          f"size={WET_X_END - WET_X_START}x{WET_Y_END - WET_Y_START}", flush=True)
     emit("startup", "none", "service_start")
 
     baseline = None
@@ -197,16 +206,18 @@ def run():
             del buf[:FRAME_SIZE]
 
             frame = np.frombuffer(frame_bytes, dtype=np.uint16).reshape((HEIGHT, WIDTH)).astype(np.float32)
-            roi = frame[int(HEIGHT * WET_Y_START):, int(WIDTH * WET_X_START):]
+            roi = frame[WET_Y_START:WET_Y_END, WET_X_START:WET_X_END]
 
             if baseline is None or baseline.shape != roi.shape:
                 baseline = roi.copy()
-            else:
-                # Always adapt the baseline, just slower while latched. That
-                # guarantees a mis-latched state eventually clears instead of
-                # sticking forever.
-                alpha = BASELINE_ALPHA_LATCHED if latched != "none" else BASELINE_ALPHA
-                baseline = (1.0 - alpha) * baseline + alpha * roi
+            elif latched == "none" and pending == "none":
+                # Only adapt the baseline during fully idle periods. Drifting
+                # while a signal is pending or latched contaminates the
+                # baseline with the suspect's own thermal signature, so when
+                # the suspect leaves the delta inverts and we trigger a
+                # phantom counter-state alert (warm cup removed -> false
+                # cold). Freezing the baseline during latch eliminates that.
+                baseline = (1.0 - BASELINE_ALPHA) * baseline + BASELINE_ALPHA * roi
 
             delta = roi - baseline
             cold_area = int(np.sum(delta < COLD_DELTA))
