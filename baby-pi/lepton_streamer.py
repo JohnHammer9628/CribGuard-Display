@@ -90,7 +90,7 @@ def main():
     detector_port = int(sys.argv[3])
 
     auto_agc = os.environ.get("CG_AGC_AUTO", "0") == "1"
-    lo_f = float(os.environ.get("CG_AGC_LO_F", "60"))
+    lo_f = float(os.environ.get("CG_AGC_LO_F", "70"))
     hi_f = float(os.environ.get("CG_AGC_HI_F", "100"))
     # cK = ((°F - 32) * 5/9 + 273.15) * 100
     lo_ck = ((lo_f - 32.0) * 5.0 / 9.0 + 273.15) * 100.0
