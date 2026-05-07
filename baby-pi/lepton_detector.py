@@ -2,11 +2,19 @@
 """
 Lepton wetness detector (Baby Pi).
 
-Reads raw GRAY8 160x120 frames from a local UDP socket (fed by a `gst-launch`
-pipeline that tees off the main RTP stream), runs a simple EMA baseline vs.
-delta detector on the lower portion of the frame, and writes wet_alert /
-wet_clear / status JSON lines to the events file that the Flask
+Reads raw Y16 (GRAY16_LE) 160x120 frames from a local UDP socket (fed by a
+`gst-launch` pipeline that tees off the main RTP stream), runs a simple EMA
+baseline vs. delta detector on the lower portion of the frame, and writes
+wet_alert / wet_clear / status JSON lines to the events file that the Flask
 /api/wet_status endpoint already tails.
+
+Y16 vs. the old GRAY8 path: Y16 is the Lepton's raw radiometric output. It
+does NOT auto-rescale per scene like the AGC'd 8-bit path did, so the deltas
+reported here are stable across scene changes (lights, baby movement, etc.).
+If the Lepton is in TLinear mode, pixel values are centikelvin and can be
+converted to Celsius as: T_c = px * 0.01 - 273.15. If TLinear is off, values
+are raw uncalibrated counts; the detector still works, just without °C units.
+The status events log both raw mean and apparent °C so you can verify mode.
 
 Intentionally uses only the stdlib + numpy — no cv2, no gst-python bindings.
 """
@@ -21,7 +29,8 @@ from datetime import datetime, timezone
 import numpy as np
 
 WIDTH, HEIGHT, FPS = 160, 120, 9
-FRAME_SIZE = WIDTH * HEIGHT
+BYTES_PER_PIXEL = 2  # Y16 = uint16 little-endian
+FRAME_SIZE = WIDTH * HEIGHT * BYTES_PER_PIXEL
 
 EVENTS_FILE = os.environ.get("CG_EVENTS_FILE", "/tmp/crib_monitor_events.jsonl")
 LISTEN_HOST = os.environ.get("CG_DETECTOR_LISTEN_HOST", "127.0.0.1")
@@ -78,15 +87,19 @@ BASELINE_ALPHA = 0.02
 # If the banner gets stuck ON after wetness is gone, raise this.
 BASELINE_ALPHA_LATCHED = 0.005
 
-# Per-pixel brightness delta (in GRAY8 units, 0-255) to count a pixel as "cold"
-# or "warm" vs. the baseline. The Lepton colormap is inferno, so:
-#   cold patches -> DARKER pixels -> negative delta (COLD_DELTA)
-#   warm patches -> BRIGHTER pixels -> positive delta (WARM_DELTA)
-# Lower magnitude = more sensitive (more pixels count, easier to trigger).
-#   - More false positives from ambient noise? Raise magnitudes (e.g. -18 / +18).
-#   - Real wetness not being detected? Lower magnitudes (e.g. -8 / +8).
-COLD_DELTA = -12.0
-WARM_DELTA = 12.0
+# Per-pixel temperature delta to count a pixel as "cold" or "warm" vs. the
+# baseline. Units are Y16 raw counts. If the Lepton is in TLinear mode, 1 unit
+# = 0.01 Kelvin (= 0.01 °C of difference), so 100 units ~ 1°C.
+#   cold patches -> COOLER pixels -> negative delta (COLD_DELTA)
+#   warm patches -> WARMER pixels -> positive delta (WARM_DELTA)
+# Wet-vs-dry diaper signature is typically a few hundred cK (~1-3°C).
+#   - More false positives from ambient noise? Raise magnitudes (e.g. ±150).
+#   - Real wetness not being detected? Lower magnitudes (e.g. ±60).
+# NOTE: when this file ran on AGC'd GRAY8, ±12 was tuned to that 0-255 scale.
+# Default below targets ~1°C in TLinear-cK. Re-tune after a few minutes of
+# tail -F /tmp/crib_monitor_events.jsonl to see the actual baseline noise.
+COLD_DELTA = -100.0
+WARM_DELTA = 100.0
 
 # How many pixels-over-threshold are required to LATCH a new alert.
 # Together with ENTER_AREA, this is the primary "am I wet?" gate.
@@ -128,7 +141,7 @@ def iso_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def emit(event_type, state, reason, cold_area=0, warm_area=0, ambient=0.0, confidence=0.0):
+def emit(event_type, state, reason, cold_area=0, warm_area=0, ambient_raw=0.0, ambient_c=0.0, confidence=0.0):
     rec = {
         "ts": iso_now(),
         "event_type": event_type,
@@ -136,7 +149,8 @@ def emit(event_type, state, reason, cold_area=0, warm_area=0, ambient=0.0, confi
         "reason": reason,
         "cold_area": int(cold_area),
         "warm_area": int(warm_area),
-        "ambient_c": float(round(ambient, 3)),
+        "ambient_raw": float(round(ambient_raw, 1)),
+        "ambient_c": float(round(ambient_c, 3)),
         "confidence": float(round(confidence, 3)),
     }
     line = json.dumps(rec)
@@ -182,7 +196,7 @@ def run():
             frame_bytes = bytes(buf[:FRAME_SIZE])
             del buf[:FRAME_SIZE]
 
-            frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((HEIGHT, WIDTH)).astype(np.float32)
+            frame = np.frombuffer(frame_bytes, dtype=np.uint16).reshape((HEIGHT, WIDTH)).astype(np.float32)
             roi = frame[int(HEIGHT * WET_Y_START):, int(WIDTH * WET_X_START):]
 
             if baseline is None or baseline.shape != roi.shape:
@@ -197,7 +211,11 @@ def run():
             delta = roi - baseline
             cold_area = int(np.sum(delta < COLD_DELTA))
             warm_area = int(np.sum(delta > WARM_DELTA))
-            ambient = float(np.mean(frame))
+            ambient_raw = float(np.mean(frame))
+            # Apparent °C assuming TLinear (centikelvin). If TLinear is OFF this
+            # number will look unphysical (negative hundreds, or very large) — that's
+            # the signal to either enable TLinear or treat values as raw counts.
+            ambient_c = ambient_raw * 0.01 - 273.15
 
             # Pick the dominant signal. A wet patch shows up strongly on ONE
             # side of the temperature delta, not both. The Lepton's colormap
@@ -218,9 +236,9 @@ def run():
                 elif now - pending_since >= PERSIST_SEC:
                     latched = observed
                     if latched == "none":
-                        emit("wet_clear", latched, "persist", cold_area, warm_area, ambient, 1.0)
+                        emit("wet_clear", latched, "persist", cold_area, warm_area, ambient_raw, ambient_c, 1.0)
                     else:
-                        emit("wet_alert", latched, "persist", cold_area, warm_area, ambient, 1.0)
+                        emit("wet_alert", latched, "persist", cold_area, warm_area, ambient_raw, ambient_c, 1.0)
                     pending = latched
             else:
                 pending = latched
@@ -229,7 +247,7 @@ def run():
             frames += 1
             if frames % STATUS_EVERY_N_FRAMES == 0:
                 reason = "persistence_wait" if pending != latched else "stable"
-                emit("status", latched, reason, cold_area, warm_area, ambient, 0.0)
+                emit("status", latched, reason, cold_area, warm_area, ambient_raw, ambient_c, 0.0)
 
 
 if __name__ == "__main__":
