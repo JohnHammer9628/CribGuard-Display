@@ -57,7 +57,7 @@ CHUNK_MS = 100
 # even when audible to humans. -20 sits in the gap and rejects the kind of
 # vocal-heavy music that is otherwise spectrally indistinguishable from a cry.
 # If the mic is moved further from the crib, lower this back toward -28.
-LOUDNESS_THRESHOLD_DB = -25.0
+LOUDNESS_THRESHOLD_DB = -28.0
 
 # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
 # Tuned to skip the overlap zone with adult voice:
@@ -73,9 +73,13 @@ VOICE_BAND_HIGH_HZ = 500       # adult-voice fundamentals + low harmonics live b
 NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 
 # Required cry_band_energy / (voice_band_energy + noise_band_energy).
-#   Raise (e.g. 8.0) -> only clearly cry-shaped spectra trigger
+#   Raise (e.g. 15.0) -> only clearly cry-shaped spectra trigger
 #   Lower (e.g. 2.0) -> triggers on anything loud with high-freq content (voice consonants can pass)
-CRY_RATIO_MIN = 5.0
+# Tuned 2026-04-17 to 8: stricter values starve the score because most cry-
+# audio chunks land in the 4-12 range with occasional 15-30+ peaks. The real
+# yelling-rejection mechanism is the tonality gate below; ratio at 8 just
+# filters out spectra dominated by voice-band fundamentals.
+CRY_RATIO_MIN = 7.0
 
 # Spectral flatness gate (Wiener entropy) measured INSIDE the cry band.
 # Definition: geometric_mean(power) / arithmetic_mean(power), in [0, 1].
@@ -87,8 +91,11 @@ CRY_RATIO_MIN = 5.0
 # even if they are loud and have lots of cry-band energy. This is what discriminates
 # music and ambient room sound from a real cry.
 #   Raise (e.g. 0.40) -> more permissive; some music can sneak through
-#   Lower (e.g. 0.20) -> stricter; only clean tonal cries pass (may miss noisy/distant cries)
-TONALITY_MAX = 0.30
+#   Lower (e.g. 0.15) -> stricter; only clean tonal cries pass (may miss noisy/distant cries)
+# Tuned 2026-04-17 from 0.30 to 0.15: adult yelling has noticeable breath
+# turbulence and formant smearing (flatness ~0.20-0.40), while real cries
+# stay extremely tonal (flatness 0.005-0.05 from your test data).
+TONALITY_MAX = 0.10
 
 # Score-based persistence, tolerant of the natural breath gaps inside a real
 # baby cry (cry -> inhale -> cry -> inhale...). A cry-shaped chunk adds
@@ -105,7 +112,11 @@ TONALITY_MAX = 0.30
 #   Raise SCORE_UP / lower SCORE_DOWN -> faster to latch, slower to clear
 #   Raise ENTER_SCORE -> needs more accumulated evidence to trigger
 #   Raise EXIT_SCORE  -> clears faster once the baby is quiet
-SCORE_UP = 3.0
+SCORE_UP = 5.0                 # bumped 3 -> 5 (2026-04-17). Sparse / intermittent cry recordings only
+                               # produce 2-4 cry-passing chunks per burst. With SCORE_UP=3 score barely
+                               # crosses ENTER_SCORE=12 then drops back below EXIT_SCORE=10 → latch
+                               # flickers. At 5, a 3-chunk burst pushes score to ~15-20, well clear of
+                               # EXIT, and the grace window can hold the latch across the inter-burst gap.
 SCORE_DOWN_SILENT = 4.0        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
 SCORE_DOWN_LATCHED = 0.3       # decay during breath gaps inside a real cry (audible background, just not cry-like right now)
 SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. Kept moderate so the score can
@@ -113,13 +124,27 @@ SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. 
                                # bursts are quieter than the loudness gate but still close in time. The loudness
                                # gate at -22 dB does the music-rejection work; this decay rate just shapes how
                                # forgiving the persistence model is to gaps within real crying.
-SILENT_DB = -50.0              # below this, the room is "silent"; above it, there's still some audible activity
-SCORE_MAX = 60.0               # cap so post-cry drain doesn't take forever (was 100)
-ENTER_SCORE = 20.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+SILENT_DB = -55.0              # below this, the room is "silent"; above it, there's still some audible activity.
+                               # Lowered -50 -> -55 (2026-04-17): some baby cry recordings drop to -50 to -54
+                               # between bursts (recording's own room ambient), and the previous threshold
+                               # treated those as "silent" → fast decay → latch crashed in 0.4 sec.
+SCORE_MAX = 35.0               # cap so post-cry drain doesn't take forever (was 100, 60, 25).
+                               # Set high enough that GRACE_SEC of slow decay still leaves headroom
+                               # above EXIT_SCORE, so brief mid-cry quiet stretches don't accidentally
+                               # clear the latch.
+GRACE_SEC = 5.0                # how many seconds we'll keep applying slow latched-decay after the
+                               # last is_cry_now chunk. Past this, fast-decay kicks in even while
+                               # latched. Bridges the breath-gap-vs-cry-ended ambiguity. Set wide
+                               # enough to span quiet stretches in your cry recording (cry sound
+                               # effects often cycle burst-silence-burst in 3-6 sec). Trade-off:
+                               # this also delays the post-cry clear by GRACE_SEC after the cry
+                               # actually ends.
+ENTER_SCORE = 12.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
                                # required, harder for brief music passages to trip a false alert.
-                               # Lowered to 20 from 45 (2026-04-17): real cry audio playing through speakers
-                               # is bursty and rarely sustains long enough to reach 45. The loudness gate
-                               # is doing the music-rejection work, so loosening this is safe.
+                               # Lowered to 12 from 20 (2026-04-17): cry recordings have peaks every 3-9 sec
+                               # with quiet between, so score routinely peaks at 8-14 then crashes before the
+                               # next burst. Tonality gate at 0.10 + ratio gate at 7 still reject conversation /
+                               # yelling / music — those rarely produce passing chunks at all.
 EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # With these numbers, from SCORE_MAX after silence (db < -50):
 #   decay at 15/sec -> reaches EXIT_SCORE in ~3 seconds.
@@ -145,7 +170,7 @@ LULLABY_DEVICE = os.environ.get("CG_LULLABY_DEVICE", ALSA_DEVICE)
 # One "status" line is appended every N analysis chunks (pure debug telemetry).
 # Set CG_CRY_DEBUG_RAW=1 to also emit every chunk's features (very chatty, only
 # for tuning sessions — disable in production).
-STATUS_EVERY_N_CHUNKS = 30  # ~3 s at 100 ms chunks
+STATUS_EVERY_N_CHUNKS = 10  # ~1 s at 100 ms chunks
 DEBUG_RAW_CHUNKS = os.environ.get("CG_CRY_DEBUG_RAW", "0").strip().lower() not in ("0", "false", "no")
 
 # =============================================================================
@@ -292,6 +317,7 @@ def run():
 
     latched = "none"          # "none" or "crying"
     score = 0.0               # cry evidence accumulator (0..SCORE_MAX)
+    last_cry_chunk_time = -1e9  # monotonic time of the last is_cry_now chunk
     lullaby_stop_at = None    # scheduled stop time for the tail
     lullaby_index = {"i": 0}
     chunks = 0
@@ -319,29 +345,31 @@ def run():
                 emit("cry_chunk", latched, "raw" if not is_cry_now else "cry_passes",
                      db, ratio, score, flatness)
 
-            # Score evolves every chunk; this is the whole "persistence" idea.
-            # Four decay regimes:
-            #  1. cry-shaped chunk            -> +SCORE_UP
-            #  2. truly silent room           -> fast decay  (real cry ended)
-            #  3. AUDIBLE but not cry-shaped  -> fast decay  (music / voice — reject)
-            #  4. quiet but not silent, latched -> slow decay (breath gap inside a real cry)
-            # The split between 3 and 4 is what stops music from holding the
-            # latch open: a loud non-cry chunk drains the score the same as
-            # silence, so once the real baby stops crying, any music playing
-            # over the top can no longer keep the alert on.
+            now = time.monotonic()
+            tonal = flatness <= TONALITY_MAX
+            # Time since the most recent chunk that passed all cry gates. The
+            # GRACE_SEC window is what bridges "cry breath gap" and "cry
+            # actually ended" — within it we keep slow-decaying to protect
+            # the latch; past it we fast-decay so the screen clears quickly.
+            time_since_cry = now - last_cry_chunk_time
+
             if is_cry_now:
+                last_cry_chunk_time = now
                 score = min(SCORE_MAX, score + SCORE_UP)
             elif db < SILENT_DB:
                 score = max(0.0, score - SCORE_DOWN_SILENT)
-            elif db >= LOUDNESS_THRESHOLD_DB:
-                # Audible non-cry: music, voice, ambient. Drain quickly.
-                score = max(0.0, score - SCORE_DOWN_SILENT)
-            elif latched == "crying":
+            elif latched == "crying" and time_since_cry < GRACE_SEC:
+                # Inside the grace window after the last cry burst — could be a
+                # breath gap. Slow decay protects the latch.
                 score = max(0.0, score - SCORE_DOWN_LATCHED)
+            elif latched == "crying":
+                # Past the grace window with no fresh cry signal — treat as
+                # "cry ended" and drain the score quickly.
+                score = max(0.0, score - SCORE_DOWN_SILENT)
+            elif not tonal:
+                score = max(0.0, score - SCORE_DOWN_SILENT)
             else:
                 score = max(0.0, score - SCORE_DOWN_IDLE)
-
-            now = time.monotonic()
 
             if latched == "none" and score >= ENTER_SCORE:
                 latched = "crying"
