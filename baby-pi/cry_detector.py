@@ -57,7 +57,7 @@ CHUNK_MS = 100
 # even when audible to humans. -20 sits in the gap and rejects the kind of
 # vocal-heavy music that is otherwise spectrally indistinguishable from a cry.
 # If the mic is moved further from the crib, lower this back toward -28.
-LOUDNESS_THRESHOLD_DB = -22.0
+LOUDNESS_THRESHOLD_DB = -25.0
 
 # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
 # Tuned to skip the overlap zone with adult voice:
@@ -106,7 +106,7 @@ TONALITY_MAX = 0.30
 #   Raise ENTER_SCORE -> needs more accumulated evidence to trigger
 #   Raise EXIT_SCORE  -> clears faster once the baby is quiet
 SCORE_UP = 3.0
-SCORE_DOWN_SILENT = 1.5        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
+SCORE_DOWN_SILENT = 4.0        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
 SCORE_DOWN_LATCHED = 0.3       # decay during breath gaps inside a real cry (audible background, just not cry-like right now)
 SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. Kept moderate so the score can
                                # accumulate across the breath gaps inside a real cry, where the chunks between
@@ -115,8 +115,11 @@ SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. 
                                # forgiving the persistence model is to gaps within real crying.
 SILENT_DB = -50.0              # below this, the room is "silent"; above it, there's still some audible activity
 SCORE_MAX = 60.0               # cap so post-cry drain doesn't take forever (was 100)
-ENTER_SCORE = 45.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+ENTER_SCORE = 20.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
                                # required, harder for brief music passages to trip a false alert.
+                               # Lowered to 20 from 45 (2026-04-17): real cry audio playing through speakers
+                               # is bursty and rarely sustains long enough to reach 45. The loudness gate
+                               # is doing the music-rejection work, so loosening this is safe.
 EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # With these numbers, from SCORE_MAX after silence (db < -50):
 #   decay at 15/sec -> reaches EXIT_SCORE in ~3 seconds.
@@ -317,12 +320,21 @@ def run():
                      db, ratio, score, flatness)
 
             # Score evolves every chunk; this is the whole "persistence" idea.
-            # Three decay regimes distinguish "baby paused for breath"
-            # (still audible, decay slowly) from "baby really stopped"
-            # (room silent, decay fast).
+            # Four decay regimes:
+            #  1. cry-shaped chunk            -> +SCORE_UP
+            #  2. truly silent room           -> fast decay  (real cry ended)
+            #  3. AUDIBLE but not cry-shaped  -> fast decay  (music / voice — reject)
+            #  4. quiet but not silent, latched -> slow decay (breath gap inside a real cry)
+            # The split between 3 and 4 is what stops music from holding the
+            # latch open: a loud non-cry chunk drains the score the same as
+            # silence, so once the real baby stops crying, any music playing
+            # over the top can no longer keep the alert on.
             if is_cry_now:
                 score = min(SCORE_MAX, score + SCORE_UP)
             elif db < SILENT_DB:
+                score = max(0.0, score - SCORE_DOWN_SILENT)
+            elif db >= LOUDNESS_THRESHOLD_DB:
+                # Audible non-cry: music, voice, ambient. Drain quickly.
                 score = max(0.0, score - SCORE_DOWN_SILENT)
             elif latched == "crying":
                 score = max(0.0, score - SCORE_DOWN_LATCHED)
