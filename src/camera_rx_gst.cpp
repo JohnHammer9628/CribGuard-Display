@@ -117,7 +117,6 @@ static bool g_first_frame_rendered = false;
 // Declared in UI globals (in the UI layer)
 extern lv_obj_t* g_cam_img;
 extern lv_obj_t* g_cam_stats_label;
-extern lv_obj_t* g_cam_spinner;
 
 // Poll from main loop: installs the latest frame into the UI image widget.
 // Uses lv_draw_buf_t with LV_IMAGE_FLAGS_MODIFIABLE so the SDL backend
@@ -167,13 +166,9 @@ void poll_gstreamer_frame() {
   lv_image_set_src(g_cam_img, g_cam_draw_buf);
   lv_obj_invalidate(g_cam_img);
 
-  // Hide spinner and ensure image is visible once we have a real frame
+  // Ensure image is visible once we have a real frame.
   if (!g_first_frame_rendered) {
     g_first_frame_rendered = true;
-    if (g_cam_spinner) {
-      lv_obj_del(g_cam_spinner);
-      g_cam_spinner = nullptr;
-    }
     lv_obj_clear_flag(g_cam_img, LV_OBJ_FLAG_HIDDEN);
 
     char buf[128];

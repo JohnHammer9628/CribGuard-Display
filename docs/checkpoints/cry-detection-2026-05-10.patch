@@ -1,0 +1,338 @@
+diff --git a/baby-pi/camera_control_server.py b/baby-pi/camera_control_server.py
+index acc7dc2..9bc2207 100644
+--- a/baby-pi/camera_control_server.py
++++ b/baby-pi/camera_control_server.py
+@@ -31,7 +31,8 @@ recording_process = None
+ playback_process = None
+ listen_process = None
+ cry_detector_process = None
+-CRY_DETECTOR_CMD = os.environ.get("CG_CRY_DETECTOR_CMD", "/usr/bin/python3 /home/jammin/cry_detector.py").split()
++CRY_DETECTOR_CMD = shlex.split(os.environ.get("CG_CRY_DETECTOR_CMD", "/usr/bin/python3 /home/jammin/cry_detector.py"))
++CRY_DETECTOR_LOG = os.path.expanduser(os.environ.get("CG_CRY_DETECTOR_LOG", "/tmp/cribguard_cry_detector.log"))
+ AUTO_START_CRY = os.environ.get("CG_AUTOSTART_CRY", "1").strip().lower() not in ("0", "false", "no")
+ 
+ # Live mic streaming ("listen mode"): baby pi -> parent pi, Opus over RTP.
+@@ -47,7 +48,7 @@ AUTO_START_RETRIES = int(os.environ.get("CG_AUTOSTART_RETRIES", "20"))
+ AUTO_START_RETRY_SEC = float(os.environ.get("CG_AUTOSTART_RETRY_SEC", "1.5"))
+ LULLABIES_DIR = os.path.expanduser("~/Lullabies")
+ os.makedirs(LULLABIES_DIR, exist_ok=True)
+-EVENTS_FILE = os.path.expanduser(os.environ.get("CG_EVENTS_FILE", "~/crib_monitor_events.jsonl"))
++EVENTS_FILE = os.path.expanduser(os.environ.get("CG_EVENTS_FILE", "/tmp/crib_monitor_events.jsonl"))
+ 
+ # Camera backend selection:
+ # - mlx90640 (default): ./mlx90640_streaming <parent_ip> <parent_port>
+@@ -295,13 +296,25 @@ def record_audio():
+     dev_arg = device if device else 'default'
+     cmd = ['arecord', '-D', dev_arg, '-f', 'S16_LE', '-r', '44100', '-c', '1', '-d', str(seconds), '-t', 'wav', filepath]
+ 
++    # The cry detector owns the same microphone. Pause it while recording and
++    # resume it when arecord exits.
++    _stop_cry_detector()
++
+     try:
+         logger.info(f"Starting audio record: {' '.join(cmd)}")
+         recording_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
++        threading.Thread(
++            target=_resume_cry_after_recording,
++            args=(recording_process,),
++            daemon=True,
++            name="cry-resume-after-recording"
++        ).start()
+         # We do not block; client can poll or rely on seconds duration
+         return jsonify({'success': True, 'file': filepath, 'seconds': seconds})
+     except Exception as e:
+         logger.error(f"Failed to start recording: {e}")
++        if AUTO_START_CRY:
++            _start_cry_detector()
+         return jsonify({'success': False, 'error': str(e)}), 500
+ 
+ 
+@@ -321,6 +334,8 @@ def record_stop():
+             os.killpg(os.getpgid(recording_process.pid), signal.SIGKILL)
+             recording_process.wait()
+         recording_process = None
++        if AUTO_START_CRY:
++            _start_cry_detector()
+         return jsonify({'success': True})
+     except Exception as e:
+         logger.error(f"Failed to stop recording: {e}")
+@@ -486,19 +501,50 @@ def update_config():
+ def _start_cry_detector():
+     """Spawn the cry detector as a managed subprocess (idempotent)."""
+     global cry_detector_process
++    if listen_process and listen_process.poll() is None:
++        logger.info("Cry detector not started; listen stream owns the microphone")
++        return
++    if recording_process and recording_process.poll() is None:
++        logger.info("Cry detector not started; audio recording owns the microphone")
++        return
+     if cry_detector_process and cry_detector_process.poll() is None:
+         return
++    log_target = subprocess.DEVNULL
++    log_handle = None
+     try:
++        try:
++            os.makedirs(os.path.dirname(CRY_DETECTOR_LOG) or ".", exist_ok=True)
++            log_handle = open(CRY_DETECTOR_LOG, "ab", buffering=0)
++            log_target = log_handle
++        except OSError as e:
++            logger.warning(f"Failed to open cry detector log {CRY_DETECTOR_LOG}: {e}; discarding output")
++
+         logger.info(f"Starting cry detector: {' '.join(CRY_DETECTOR_CMD)}")
+         cry_detector_process = subprocess.Popen(
+             CRY_DETECTOR_CMD,
+-            stdout=subprocess.PIPE,
+-            stderr=subprocess.PIPE,
++            stdout=log_target,
++            stderr=subprocess.STDOUT,
+             preexec_fn=os.setsid,
+         )
+     except Exception as e:
+         logger.error(f"Failed to start cry detector: {e}")
+         cry_detector_process = None
++    finally:
++        if log_handle:
++            log_handle.close()
++
++
++def _resume_cry_after_recording(proc):
++    """Restart cry detection after a one-shot arecord process releases the mic."""
++    global recording_process
++    try:
++        proc.wait()
++    except Exception as e:
++        logger.warning(f"Recording wait failed: {e}")
++    if recording_process is proc:
++        recording_process = None
++    if AUTO_START_CRY:
++        _start_cry_detector()
+ 
+ 
+ def _stop_cry_detector():
+@@ -524,7 +570,18 @@ def read_last_cry_state():
+     """Tail the shared events file and return the most recent cry state.
+     Only cry_* events are considered; the wetness detector's events are
+     skipped. Returns 'crying' | 'none'."""
+-    result = {'state': 'none', 'event_type': '', 'ts': '', 'db': 0.0, 'cry_ratio': 0.0, 'source': EVENTS_FILE}
++    result = {
++        'state': 'none',
++        'event_type': '',
++        'ts': '',
++        'db': 0.0,
++        'cry_ratio': 0.0,
++        'flatness': 0.0,
++        'pitch_hz': 0.0,
++        'pitch_conf': 0.0,
++        'score': 0.0,
++        'source': EVENTS_FILE,
++    }
+     try:
+         with open(EVENTS_FILE, 'rb') as f:
+             f.seek(0, 2)
+@@ -547,6 +604,10 @@ def read_last_cry_state():
+                 result['ts'] = ev.get('ts', '')
+                 result['db'] = ev.get('db', 0.0)
+                 result['cry_ratio'] = ev.get('cry_ratio', 0.0)
++                result['flatness'] = ev.get('flatness', 0.0)
++                result['pitch_hz'] = ev.get('pitch_hz', 0.0)
++                result['pitch_conf'] = ev.get('pitch_conf', 0.0)
++                result['score'] = ev.get('score', 0.0)
+                 return result
+     except FileNotFoundError:
+         pass
+@@ -730,6 +791,8 @@ def listen_start():
+         })
+     except Exception as e:
+         logger.error(f"Failed to start listen stream: {e}")
++        if AUTO_START_CRY:
++            _start_cry_detector()
+         return jsonify({'success': False, 'error': str(e)}), 500
+ 
+ 
+diff --git a/baby-pi/cry_detector.py b/baby-pi/cry_detector.py
+index ddb5ae7..1d32597 100644
+--- a/baby-pi/cry_detector.py
++++ b/baby-pi/cry_detector.py
+@@ -60,16 +60,17 @@ CHUNK_MS = 100
+ LOUDNESS_THRESHOLD_DB = -28.0
+ 
+ # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
+-# Tuned to skip the overlap zone with adult voice:
++# Tuned 2026-05 to include the baby cry fundamental again. The previous
++# 800 Hz low edge rejected some real cries because the strongest baby tone can
++# sit around 400-700 Hz; adult speech is now rejected mostly by the pitch gate
++# below instead of by throwing away that whole region.
+ #   Adult male fundamental  ~85-180 Hz
+ #   Adult female fundamental ~165-255 Hz
+ #   Their harmonics extend to ~400-700 Hz and can leak higher
+ #   Baby cry fundamental + strong harmonics ~600-2500 Hz
+-# Starting the cry band at 800 Hz excludes most adult-voice harmonic energy
+-# while still capturing where baby cries are loud.
+-CRY_BAND_LOW_HZ = 800
+-CRY_BAND_HIGH_HZ = 2800
+-VOICE_BAND_HIGH_HZ = 500       # adult-voice fundamentals + low harmonics live below this
++CRY_BAND_LOW_HZ = 450
++CRY_BAND_HIGH_HZ = 3200
++VOICE_BAND_HIGH_HZ = 350       # adult-voice fundamentals + low harmonics live below this
+ NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
+ 
+ # Required cry_band_energy / (voice_band_energy + noise_band_energy).
+@@ -97,6 +98,23 @@ CRY_RATIO_MIN = 7.0
+ # stay extremely tonal (flatness 0.005-0.05 from your test data).
+ TONALITY_MAX = 0.10
+ 
++# Pitch gate. Infant cries usually have a much higher fundamental than normal
++# adult talking. This is the main speech-vs-cry discriminator:
++#   adult speech: ~85-255 Hz fundamental
++#   baby crying: often ~350-750 Hz, sometimes higher when close to the mic
++# If real cries are still being missed, lower PITCH_MIN_HZ toward 280 or
++# PITCH_CONF_MIN toward 0.20. If talking still slips through, raise
++# PITCH_MIN_HZ toward 380 or PITCH_CONF_MIN toward 0.35.
++PITCH_MIN_HZ = float(os.environ.get("CG_CRY_PITCH_MIN_HZ", "320"))
++PITCH_MAX_HZ = float(os.environ.get("CG_CRY_PITCH_MAX_HZ", "850"))
++PITCH_CONF_MIN = float(os.environ.get("CG_CRY_PITCH_CONF_MIN", "0.28"))
++
++# Rarely, a real cry chunk is very cry-shaped but the autocorrelation pitch is
++# weak because of breath noise or clipping. This bypass keeps those chunks from
++# being discarded, while still requiring a much stronger spectrum than normal.
++STRONG_CRY_RATIO_MIN = float(os.environ.get("CG_CRY_STRONG_RATIO_MIN", "18.0"))
++STRONG_TONALITY_MAX = float(os.environ.get("CG_CRY_STRONG_TONALITY_MAX", "0.06"))
++
+ # Score-based persistence, tolerant of the natural breath gaps inside a real
+ # baby cry (cry -> inhale -> cry -> inhale...). A cry-shaped chunk adds
+ # SCORE_UP; a non-cry chunk subtracts SCORE_DOWN. The score is clamped to
+@@ -190,7 +208,8 @@ def iso_now():
+     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+ 
+ 
+-def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0):
++def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0,
++         pitch_hz=0.0, pitch_conf=0.0):
+     rec = {
+         "ts": iso_now(),
+         "event_type": event_type,
+@@ -199,6 +218,8 @@ def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0
+         "db": float(round(db, 2)),
+         "cry_ratio": float(round(cry_ratio, 3)),
+         "flatness": float(round(flatness, 3)),
++        "pitch_hz": float(round(pitch_hz, 1)),
++        "pitch_conf": float(round(pitch_conf, 3)),
+         "score": float(round(score, 1)),
+     }
+     line = json.dumps(rec)
+@@ -275,6 +296,52 @@ def rms_db(samples_f32):
+     return 20.0 * np.log10(rms / 32768.0)
+ 
+ 
++def pitch_features(samples_f32):
++    """Estimate fundamental frequency with autocorrelation.
++
++    Returns (pitch_hz, confidence), where confidence is normalized
++    autocorrelation at the best lag in the configured baby-cry pitch range.
++    """
++    x = samples_f32 - float(np.mean(samples_f32))
++    if len(x) < 4:
++        return 0.0, 0.0
++
++    x = x * np.hanning(len(x))
++    energy = float(np.sum(x * x))
++    if energy < 1.0:
++        return 0.0, 0.0
++
++    min_lag = max(1, int(SAMPLE_RATE / PITCH_MAX_HZ))
++    max_lag = min(len(x) - 1, int(SAMPLE_RATE / PITCH_MIN_HZ))
++    if max_lag <= min_lag:
++        return 0.0, 0.0
++
++    # FFT autocorrelation is fast enough for 100 ms chunks on the Pi.
++    fft_size = 1 << ((2 * len(x) - 1).bit_length())
++    spectrum = np.fft.rfft(x, fft_size)
++    corr = np.fft.irfft(spectrum * np.conj(spectrum))[:len(x)]
++    corr0 = float(corr[0])
++    if corr0 <= 0.0:
++        return 0.0, 0.0
++
++    window = corr[min_lag:max_lag + 1]
++    best_lag = int(np.argmax(window)) + min_lag
++
++    # Small parabolic interpolation around the best lag for a less jumpy pitch.
++    refined_lag = float(best_lag)
++    if 1 <= best_lag < len(corr) - 1:
++        y0 = float(corr[best_lag - 1])
++        y1 = float(corr[best_lag])
++        y2 = float(corr[best_lag + 1])
++        denom = y0 - 2.0 * y1 + y2
++        if abs(denom) > 1e-9:
++            refined_lag += 0.5 * (y0 - y2) / denom
++
++    pitch_hz = SAMPLE_RATE / refined_lag if refined_lag > 0.0 else 0.0
++    confidence = max(0.0, min(1.0, float(corr[best_lag]) / corr0))
++    return float(pitch_hz), float(confidence)
++
++
+ def cry_features(samples_f32):
+     # Window to reduce spectral leakage, then real FFT for power spectrum.
+     window = np.hanning(len(samples_f32))
+@@ -298,7 +365,9 @@ def cry_features(samples_f32):
+     geo = float(np.exp(np.mean(np.log(cp))))
+     flatness = geo / arith if arith > 0 else 1.0
+ 
+-    return ratio, flatness
++    pitch_hz, pitch_conf = pitch_features(samples_f32)
++
++    return ratio, flatness, pitch_hz, pitch_conf
+ 
+ 
+ def run():
+@@ -335,15 +404,24 @@ def run():
+ 
+             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+             db = rms_db(samples)
+-            ratio, flatness = cry_features(samples)
++            ratio, flatness, pitch_hz, pitch_conf = cry_features(samples)
++            pitch_ok = (
++                PITCH_MIN_HZ <= pitch_hz <= PITCH_MAX_HZ
++                and pitch_conf >= PITCH_CONF_MIN
++            )
++            strong_cry_shape = (
++                ratio >= STRONG_CRY_RATIO_MIN
++                and flatness <= STRONG_TONALITY_MAX
++            )
+             is_cry_now = (
+                 db >= LOUDNESS_THRESHOLD_DB
+                 and ratio >= CRY_RATIO_MIN
+                 and flatness <= TONALITY_MAX
++                and (pitch_ok or strong_cry_shape)
+             )
+             if DEBUG_RAW_CHUNKS:
+                 emit("cry_chunk", latched, "raw" if not is_cry_now else "cry_passes",
+-                     db, ratio, score, flatness)
++                     db, ratio, score, flatness, pitch_hz, pitch_conf)
+ 
+             now = time.monotonic()
+             tonal = flatness <= TONALITY_MAX
+@@ -373,13 +451,13 @@ def run():
+ 
+             if latched == "none" and score >= ENTER_SCORE:
+                 latched = "crying"
+-                emit("cry_alert", "crying", "score_enter", db, ratio, score, flatness)
++                emit("cry_alert", "crying", "score_enter", db, ratio, score, flatness, pitch_hz, pitch_conf)
+                 start_lullaby(lullaby_index)
+                 lullaby_stop_at = None  # cancel any scheduled stop
+             elif latched == "crying":
+                 if score < EXIT_SCORE:
+                     latched = "none"
+-                    emit("cry_clear", "none", "score_exit", db, ratio, score, flatness)
++                    emit("cry_clear", "none", "score_exit", db, ratio, score, flatness, pitch_hz, pitch_conf)
+                     lullaby_stop_at = now + POST_CRY_TAIL_SEC
+                 else:
+                     # Still accumulating / still crying; cancel any pending stop.
+@@ -397,7 +475,7 @@ def run():
+                     reason = "building" if score > 0 else "stable"
+                 else:
+                     reason = "tailing" if score < ENTER_SCORE else "stable"
+-                emit("cry_status", latched, reason, db, ratio, score, flatness)
++                emit("cry_status", latched, reason, db, ratio, score, flatness, pitch_hz, pitch_conf)
+     finally:
+         try:
+             arecord.terminate()

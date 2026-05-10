@@ -60,16 +60,17 @@ CHUNK_MS = 100
 LOUDNESS_THRESHOLD_DB = -28.0
 
 # Frequency bands (Hz) used to tell a cry apart from other loud sounds.
-# Tuned to skip the overlap zone with adult voice:
+# Tuned 2026-05 to include the baby cry fundamental again. The previous
+# 800 Hz low edge rejected some real cries because the strongest baby tone can
+# sit around 400-700 Hz; adult speech is now rejected mostly by the pitch gate
+# below instead of by throwing away that whole region.
 #   Adult male fundamental  ~85-180 Hz
 #   Adult female fundamental ~165-255 Hz
 #   Their harmonics extend to ~400-700 Hz and can leak higher
 #   Baby cry fundamental + strong harmonics ~600-2500 Hz
-# Starting the cry band at 800 Hz excludes most adult-voice harmonic energy
-# while still capturing where baby cries are loud.
-CRY_BAND_LOW_HZ = 800
-CRY_BAND_HIGH_HZ = 2800
-VOICE_BAND_HIGH_HZ = 500       # adult-voice fundamentals + low harmonics live below this
+CRY_BAND_LOW_HZ = 450
+CRY_BAND_HIGH_HZ = 3200
+VOICE_BAND_HIGH_HZ = 350       # adult-voice fundamentals + low harmonics live below this
 NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 
 # Required cry_band_energy / (voice_band_energy + noise_band_energy).
@@ -79,7 +80,7 @@ NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 # audio chunks land in the 4-12 range with occasional 15-30+ peaks. The real
 # yelling-rejection mechanism is the tonality gate below; ratio at 8 just
 # filters out spectra dominated by voice-band fundamentals.
-CRY_RATIO_MIN = 7.0
+CRY_RATIO_MIN = 10.0
 
 # Spectral flatness gate (Wiener entropy) measured INSIDE the cry band.
 # Definition: geometric_mean(power) / arithmetic_mean(power), in [0, 1].
@@ -97,6 +98,33 @@ CRY_RATIO_MIN = 7.0
 # stay extremely tonal (flatness 0.005-0.05 from your test data).
 TONALITY_MAX = 0.10
 
+# Pitch gate. Infant cries usually have a much higher fundamental than normal
+# adult talking. This is the main speech-vs-cry discriminator:
+#   adult speech: ~85-255 Hz fundamental
+#   baby crying: often ~350-750 Hz, sometimes higher when close to the mic
+# If real cries are still being missed, lower PITCH_MIN_HZ toward 280 or
+# PITCH_CONF_MIN toward 0.20. If talking still slips through, raise
+# PITCH_MIN_HZ toward 380 or PITCH_CONF_MIN toward 0.35.
+PITCH_MIN_HZ = float(os.environ.get("CG_CRY_PITCH_MIN_HZ", "320"))
+PITCH_MAX_HZ = float(os.environ.get("CG_CRY_PITCH_MAX_HZ", "850"))
+PITCH_CONF_MIN = float(os.environ.get("CG_CRY_PITCH_CONF_MIN", "0.35"))
+
+# Rarely, a real cry chunk is very cry-shaped but the autocorrelation pitch is
+# weak because of breath noise or clipping. This bypass keeps those chunks from
+# being discarded, while still requiring a much stronger spectrum than normal.
+STRONG_CRY_RATIO_MIN = float(os.environ.get("CG_CRY_STRONG_RATIO_MIN", "18.0"))
+STRONG_TONALITY_MAX = float(os.environ.get("CG_CRY_STRONG_TONALITY_MAX", "0.06"))
+STRONG_PITCH_CONF_MIN = float(os.environ.get("CG_CRY_STRONG_PITCH_CONF_MIN", "0.25"))
+
+# Some baby-cry recordings are almost pure tonal wails. They may not have a
+# high cry_ratio because the denominator band also gets energy, but they do
+# have a very stable baby-range pitch and extremely low flatness. This alternate
+# gate catches those while still rejecting normal talking through the rolling
+# evidence latch below.
+TONAL_WAIL_RATIO_MIN = float(os.environ.get("CG_CRY_TONAL_WAIL_RATIO_MIN", "0.35"))
+TONAL_WAIL_FLATNESS_MAX = float(os.environ.get("CG_CRY_TONAL_WAIL_FLATNESS_MAX", "0.025"))
+TONAL_WAIL_PITCH_CONF_MIN = float(os.environ.get("CG_CRY_TONAL_WAIL_PITCH_CONF_MIN", "0.65"))
+
 # Score-based persistence, tolerant of the natural breath gaps inside a real
 # baby cry (cry -> inhale -> cry -> inhale...). A cry-shaped chunk adds
 # SCORE_UP; a non-cry chunk subtracts SCORE_DOWN. The score is clamped to
@@ -112,14 +140,14 @@ TONALITY_MAX = 0.10
 #   Raise SCORE_UP / lower SCORE_DOWN -> faster to latch, slower to clear
 #   Raise ENTER_SCORE -> needs more accumulated evidence to trigger
 #   Raise EXIT_SCORE  -> clears faster once the baby is quiet
-SCORE_UP = 5.0                 # bumped 3 -> 5 (2026-04-17). Sparse / intermittent cry recordings only
+SCORE_UP = 3.0                 # slower latch: normal speech can produce brief cry-shaped chunks
                                # produce 2-4 cry-passing chunks per burst. With SCORE_UP=3 score barely
                                # crosses ENTER_SCORE=12 then drops back below EXIT_SCORE=10 → latch
                                # flickers. At 5, a 3-chunk burst pushes score to ~15-20, well clear of
                                # EXIT, and the grace window can hold the latch across the inter-burst gap.
 SCORE_DOWN_SILENT = 4.0        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
 SCORE_DOWN_LATCHED = 0.3       # decay during breath gaps inside a real cry (audible background, just not cry-like right now)
-SCORE_DOWN_IDLE = 0.8          # decay when NOT latched and not clearly silent. Kept moderate so the score can
+SCORE_DOWN_IDLE = 1.2          # decay when NOT latched and not clearly silent. Kept moderate so the score can
                                # accumulate across the breath gaps inside a real cry, where the chunks between
                                # bursts are quieter than the loudness gate but still close in time. The loudness
                                # gate at -22 dB does the music-rejection work; this decay rate just shapes how
@@ -139,7 +167,7 @@ GRACE_SEC = 5.0                # how many seconds we'll keep applying slow latch
                                # effects often cycle burst-silence-burst in 3-6 sec). Trade-off:
                                # this also delays the post-cry clear by GRACE_SEC after the cry
                                # actually ends.
-ENTER_SCORE = 12.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+ENTER_SCORE = 18.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
                                # required, harder for brief music passages to trip a false alert.
                                # Lowered to 12 from 20 (2026-04-17): cry recordings have peaks every 3-9 sec
                                # with quiet between, so score routinely peaks at 8-14 then crashes before the
@@ -149,6 +177,13 @@ EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # With these numbers, from SCORE_MAX after silence (db < -50):
 #   decay at 15/sec -> reaches EXIT_SCORE in ~3 seconds.
 # After cry_clear fires, the lullaby plays for POST_CRY_TAIL_SEC more before stopping.
+
+# Rolling evidence catches real crying that arrives as short repeated bursts.
+# Normal speech can create isolated cry_passes, but it usually does not create
+# this many pass chunks in a tight window. This sits alongside the score latch
+# instead of replacing it.
+ROLLING_EVIDENCE_SEC = 3.0
+ROLLING_MIN_PASSES = 10
 
 # Seconds to keep the lullaby playing AFTER the cry clears.
 #   0.0     -> stop the lullaby immediately when cry_clear fires
@@ -172,6 +207,7 @@ LULLABY_DEVICE = os.environ.get("CG_LULLABY_DEVICE", ALSA_DEVICE)
 # for tuning sessions — disable in production).
 STATUS_EVERY_N_CHUNKS = 10  # ~1 s at 100 ms chunks
 DEBUG_RAW_CHUNKS = os.environ.get("CG_CRY_DEBUG_RAW", "0").strip().lower() not in ("0", "false", "no")
+DEBUG_PASS_CHUNKS = os.environ.get("CG_CRY_DEBUG_PASSES", "1").strip().lower() not in ("0", "false", "no")
 
 # =============================================================================
 
@@ -190,7 +226,8 @@ def iso_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0):
+def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0,
+         pitch_hz=0.0, pitch_conf=0.0, pass_count=0):
     rec = {
         "ts": iso_now(),
         "event_type": event_type,
@@ -199,6 +236,9 @@ def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0
         "db": float(round(db, 2)),
         "cry_ratio": float(round(cry_ratio, 3)),
         "flatness": float(round(flatness, 3)),
+        "pitch_hz": float(round(pitch_hz, 1)),
+        "pitch_conf": float(round(pitch_conf, 3)),
+        "pass_count": int(pass_count),
         "score": float(round(score, 1)),
     }
     line = json.dumps(rec)
@@ -275,6 +315,52 @@ def rms_db(samples_f32):
     return 20.0 * np.log10(rms / 32768.0)
 
 
+def pitch_features(samples_f32):
+    """Estimate fundamental frequency with autocorrelation.
+
+    Returns (pitch_hz, confidence), where confidence is normalized
+    autocorrelation at the best lag in the configured baby-cry pitch range.
+    """
+    x = samples_f32 - float(np.mean(samples_f32))
+    if len(x) < 4:
+        return 0.0, 0.0
+
+    x = x * np.hanning(len(x))
+    energy = float(np.sum(x * x))
+    if energy < 1.0:
+        return 0.0, 0.0
+
+    min_lag = max(1, int(SAMPLE_RATE / PITCH_MAX_HZ))
+    max_lag = min(len(x) - 1, int(SAMPLE_RATE / PITCH_MIN_HZ))
+    if max_lag <= min_lag:
+        return 0.0, 0.0
+
+    # FFT autocorrelation is fast enough for 100 ms chunks on the Pi.
+    fft_size = 1 << ((2 * len(x) - 1).bit_length())
+    spectrum = np.fft.rfft(x, fft_size)
+    corr = np.fft.irfft(spectrum * np.conj(spectrum))[:len(x)]
+    corr0 = float(corr[0])
+    if corr0 <= 0.0:
+        return 0.0, 0.0
+
+    window = corr[min_lag:max_lag + 1]
+    best_lag = int(np.argmax(window)) + min_lag
+
+    # Small parabolic interpolation around the best lag for a less jumpy pitch.
+    refined_lag = float(best_lag)
+    if 1 <= best_lag < len(corr) - 1:
+        y0 = float(corr[best_lag - 1])
+        y1 = float(corr[best_lag])
+        y2 = float(corr[best_lag + 1])
+        denom = y0 - 2.0 * y1 + y2
+        if abs(denom) > 1e-9:
+            refined_lag += 0.5 * (y0 - y2) / denom
+
+    pitch_hz = SAMPLE_RATE / refined_lag if refined_lag > 0.0 else 0.0
+    confidence = max(0.0, min(1.0, float(corr[best_lag]) / corr0))
+    return float(pitch_hz), float(confidence)
+
+
 def cry_features(samples_f32):
     # Window to reduce spectral leakage, then real FFT for power spectrum.
     window = np.hanning(len(samples_f32))
@@ -298,7 +384,9 @@ def cry_features(samples_f32):
     geo = float(np.exp(np.mean(np.log(cp))))
     flatness = geo / arith if arith > 0 else 1.0
 
-    return ratio, flatness
+    pitch_hz, pitch_conf = pitch_features(samples_f32)
+
+    return ratio, flatness, pitch_hz, pitch_conf
 
 
 def run():
@@ -318,6 +406,8 @@ def run():
     latched = "none"          # "none" or "crying"
     score = 0.0               # cry evidence accumulator (0..SCORE_MAX)
     last_cry_chunk_time = -1e9  # monotonic time of the last is_cry_now chunk
+    first_cry_evidence_time = None  # first passing chunk in the current build-up
+    cry_pass_times = []       # monotonic times of recent chunks that passed all cry gates
     lullaby_stop_at = None    # scheduled stop time for the tail
     lullaby_index = {"i": 0}
     chunks = 0
@@ -335,17 +425,45 @@ def run():
 
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             db = rms_db(samples)
-            ratio, flatness = cry_features(samples)
-            is_cry_now = (
-                db >= LOUDNESS_THRESHOLD_DB
-                and ratio >= CRY_RATIO_MIN
-                and flatness <= TONALITY_MAX
+            ratio, flatness, pitch_hz, pitch_conf = cry_features(samples)
+            pitch_ok = (
+                PITCH_MIN_HZ <= pitch_hz <= PITCH_MAX_HZ
+                and pitch_conf >= PITCH_CONF_MIN
             )
-            if DEBUG_RAW_CHUNKS:
-                emit("cry_chunk", latched, "raw" if not is_cry_now else "cry_passes",
-                     db, ratio, score, flatness)
+            strong_cry_shape = (
+                ratio >= STRONG_CRY_RATIO_MIN
+                and flatness <= STRONG_TONALITY_MAX
+                and PITCH_MIN_HZ <= pitch_hz <= PITCH_MAX_HZ
+                and pitch_conf >= STRONG_PITCH_CONF_MIN
+            )
+            tonal_wail = (
+                db >= LOUDNESS_THRESHOLD_DB
+                and ratio >= TONAL_WAIL_RATIO_MIN
+                and flatness <= TONAL_WAIL_FLATNESS_MAX
+                and PITCH_MIN_HZ <= pitch_hz <= PITCH_MAX_HZ
+                and pitch_conf >= TONAL_WAIL_PITCH_CONF_MIN
+            )
+            is_cry_now = (
+                (
+                    db >= LOUDNESS_THRESHOLD_DB
+                    and ratio >= CRY_RATIO_MIN
+                    and flatness <= TONALITY_MAX
+                    and (pitch_ok or strong_cry_shape)
+                )
+                or tonal_wail
+            )
 
             now = time.monotonic()
+            cutoff = now - ROLLING_EVIDENCE_SEC
+            cry_pass_times = [t for t in cry_pass_times if t >= cutoff]
+            if is_cry_now:
+                cry_pass_times.append(now)
+            pass_count = len(cry_pass_times)
+
+            if DEBUG_RAW_CHUNKS or (DEBUG_PASS_CHUNKS and is_cry_now):
+                emit("cry_chunk", latched, "raw" if not is_cry_now else "cry_passes",
+                     db, ratio, score, flatness, pitch_hz, pitch_conf, pass_count)
+
             tonal = flatness <= TONALITY_MAX
             # Time since the most recent chunk that passed all cry gates. The
             # GRACE_SEC window is what bridges "cry breath gap" and "cry
@@ -354,6 +472,8 @@ def run():
             time_since_cry = now - last_cry_chunk_time
 
             if is_cry_now:
+                if first_cry_evidence_time is None:
+                    first_cry_evidence_time = now
                 last_cry_chunk_time = now
                 score = min(SCORE_MAX, score + SCORE_UP)
             elif db < SILENT_DB:
@@ -371,15 +491,32 @@ def run():
             else:
                 score = max(0.0, score - SCORE_DOWN_IDLE)
 
-            if latched == "none" and score >= ENTER_SCORE:
+            if latched == "none" and score <= 0.0:
+                first_cry_evidence_time = None
+
+            sustained_evidence = (
+                first_cry_evidence_time is not None
+                and (now - first_cry_evidence_time) >= 1.8
+            )
+            rolling_evidence = pass_count >= ROLLING_MIN_PASSES
+            if latched == "none" and (
+                (score >= ENTER_SCORE and sustained_evidence) or rolling_evidence
+            ):
                 latched = "crying"
-                emit("cry_alert", "crying", "score_enter", db, ratio, score, flatness)
+                reason = "rolling_enter" if rolling_evidence else "score_enter"
+                if rolling_evidence:
+                    score = max(score, ENTER_SCORE)
+                emit("cry_alert", "crying", reason, db, ratio, score, flatness,
+                     pitch_hz, pitch_conf, pass_count)
                 start_lullaby(lullaby_index)
                 lullaby_stop_at = None  # cancel any scheduled stop
             elif latched == "crying":
                 if score < EXIT_SCORE:
                     latched = "none"
-                    emit("cry_clear", "none", "score_exit", db, ratio, score, flatness)
+                    first_cry_evidence_time = None
+                    cry_pass_times = []
+                    emit("cry_clear", "none", "score_exit", db, ratio, score, flatness,
+                         pitch_hz, pitch_conf, pass_count)
                     lullaby_stop_at = now + POST_CRY_TAIL_SEC
                 else:
                     # Still accumulating / still crying; cancel any pending stop.
@@ -397,7 +534,8 @@ def run():
                     reason = "building" if score > 0 else "stable"
                 else:
                     reason = "tailing" if score < ENTER_SCORE else "stable"
-                emit("cry_status", latched, reason, db, ratio, score, flatness)
+                emit("cry_status", latched, reason, db, ratio, score, flatness,
+                     pitch_hz, pitch_conf, pass_count)
     finally:
         try:
             arecord.terminate()

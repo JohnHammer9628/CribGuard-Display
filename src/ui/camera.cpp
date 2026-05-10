@@ -24,7 +24,6 @@
 // Global (not namespaced) for `src/camera_rx_gst.cpp` compatibility.
 lv_obj_t* g_cam_img = nullptr;
 lv_obj_t* g_cam_stats_label = nullptr;
-lv_obj_t* g_cam_spinner = nullptr;
 
 namespace cg::ui {
 
@@ -37,7 +36,6 @@ static lv_obj_t* g_cam_meta_label = nullptr;
 static lv_obj_t* g_cam_sw_mute = nullptr;
 static lv_obj_t* g_cam_controls_row = nullptr;
 
-static lv_timer_t* g_cam_spinner_timer = nullptr;
 static std::atomic<bool> g_cam_start_worker_running{false};
 
 // Wet-state notification
@@ -252,20 +250,6 @@ static void on_roi_set_clicked(lv_event_t* /*e*/) {
     roi_enter_edit();
 }
 
-// Show the spinner immediately; optionally auto-hide after N milliseconds.
-static void cam_spinner_show(uint32_t auto_hide_ms) {
-    if (g_cam_spinner) lv_obj_clear_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
-    if (g_cam_spinner_timer) { lv_timer_del(g_cam_spinner_timer); g_cam_spinner_timer = nullptr; }
-    if (auto_hide_ms > 0) {
-        g_cam_spinner_timer = lv_timer_create([](lv_timer_t* t){
-            if (g_cam_spinner) lv_obj_add_flag(g_cam_spinner, LV_OBJ_FLAG_HIDDEN);
-            lv_timer_del(t);
-            g_cam_spinner_timer = nullptr;
-        }, auto_hide_ms, nullptr);
-        lv_timer_set_repeat_count(g_cam_spinner_timer, 1);
-    }
-}
-
 // Ensure camera stream + receiver are running.
 static void request_camera_start_async(const char* reason) {
     // Receiver start is idempotent.
@@ -307,7 +291,6 @@ static void close_camera() {
         g_camera_surface = nullptr;
         g_camera_sheet = nullptr;
         g_cam_img = nullptr;
-        g_cam_spinner = nullptr;
         g_cam_live_label = nullptr;
         g_cam_meta_label = nullptr;
         g_cam_stats_label = nullptr;
@@ -355,7 +338,6 @@ static void apply_camera_ui_state() {
         lv_label_set_text(g_cam_meta_label, "Live");
         lv_obj_set_style_text_color(g_cam_meta_label, theme::primary_accent(), 0);
     }
-    // Spinner visibility is controlled explicitly via cam_spinner_show.
     if (g_camera_sheet) {
         lv_obj_set_size(g_camera_sheet, LV_PCT(100), LV_PCT(100));
         lv_obj_center(g_camera_sheet);
@@ -474,14 +456,6 @@ void build_camera_dialog(lv_obj_t* parent) {
     lv_obj_clear_flag(g_roi_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(g_roi_overlay, LV_OBJ_FLAG_HIDDEN);
 
-    // spinner
-    g_cam_spinner = lv_spinner_create(g_camera_surface);
-    lv_spinner_set_anim_params(g_cam_spinner, 1000, 60);
-    lv_obj_set_size(g_cam_spinner, 48, 48);
-    lv_obj_center(g_cam_spinner);
-    lv_obj_set_style_arc_color(g_cam_spinner, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(g_cam_spinner, theme::primary_accent(), LV_PART_INDICATOR);
-
     // controls row (moved below video)
     lv_obj_t* row_ctrls = lv_obj_create(sheet);
     g_cam_controls_row = row_ctrls;
@@ -583,7 +557,6 @@ void build_camera_dialog(lv_obj_t* parent) {
 
     log_line("[UI] camera opened");
     apply_camera_ui_state();
-    cam_spinner_show(0);
     request_camera_start_async("[UI] camera opened: ensuring stream live");
 
     // Start the wet-state polling timer.
