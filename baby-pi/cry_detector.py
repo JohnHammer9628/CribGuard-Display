@@ -80,7 +80,7 @@ NOISE_BAND_LOW_HZ = 4500       # broadband noise / sibilance lives above this
 # audio chunks land in the 4-12 range with occasional 15-30+ peaks. The real
 # yelling-rejection mechanism is the tonality gate below; ratio at 8 just
 # filters out spectra dominated by voice-band fundamentals.
-CRY_RATIO_MIN = 10.0
+CRY_RATIO_MIN = 8.0
 
 # Spectral flatness gate (Wiener entropy) measured INSIDE the cry band.
 # Definition: geometric_mean(power) / arithmetic_mean(power), in [0, 1].
@@ -167,7 +167,7 @@ GRACE_SEC = 5.0                # how many seconds we'll keep applying slow latch
                                # effects often cycle burst-silence-burst in 3-6 sec). Trade-off:
                                # this also delays the post-cry clear by GRACE_SEC after the cry
                                # actually ends.
-ENTER_SCORE = 18.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+ENTER_SCORE = 24.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
                                # required, harder for brief music passages to trip a false alert.
                                # Lowered to 12 from 20 (2026-04-17): cry recordings have peaks every 3-9 sec
                                # with quiet between, so score routinely peaks at 8-14 then crashes before the
@@ -183,7 +183,8 @@ EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # this many pass chunks in a tight window. This sits alongside the score latch
 # instead of replacing it.
 ROLLING_EVIDENCE_SEC = 3.0
-ROLLING_MIN_PASSES = 10
+ROLLING_MIN_PASSES = 12
+ROLLING_MIN_SCORE = float(os.environ.get("CG_CRY_ROLLING_MIN_SCORE", "24.0"))
 
 # Seconds to keep the lullaby playing AFTER the cry clears.
 #   0.0     -> stop the lullaby immediately when cry_clear fires
@@ -498,7 +499,10 @@ def run():
                 first_cry_evidence_time is not None
                 and (now - first_cry_evidence_time) >= 1.8
             )
-            rolling_evidence = pass_count >= ROLLING_MIN_PASSES
+            rolling_evidence = (
+                pass_count >= ROLLING_MIN_PASSES
+                and score >= ROLLING_MIN_SCORE
+            )
             if latched == "none" and (
                 (score >= ENTER_SCORE and sustained_evidence) or rolling_evidence
             ):
