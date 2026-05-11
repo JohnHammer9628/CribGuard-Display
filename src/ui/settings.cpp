@@ -8,7 +8,9 @@
 #include "ui/settings.h"
 
 #include <cstdlib>
+#include <thread>
 
+#include "baby_pi_api.h"
 #include "logging.h"
 #include "ui_app.h"
 #include "ui/common.h"
@@ -208,6 +210,11 @@ void build_settings_dialog(lv_obj_t* parent) {
         state::quiet_hours = lv_obj_has_state(sw_qh, LV_STATE_CHECKED);
         state::quiet_start = lv_dropdown_get_selected(dd_start);
         state::quiet_end   = lv_dropdown_get_selected(dd_end);
+
+        const int saved_volume = state::volume;
+        std::thread([saved_volume]() {
+            baby_pi_set_lullaby_volume(saved_volume);
+        }).detach();
 
         update_top_label();
         log_line("[UI] settings saved");

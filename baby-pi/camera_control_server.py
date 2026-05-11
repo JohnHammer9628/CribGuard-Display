@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 streaming_process = None
 recording_process = None
 playback_process = None
+playback_file = None
+playback_device = None
+playback_volume_percent = 25
+playback_index = 0
 listen_process = None
 cry_detector_process = None
 CRY_DETECTOR_CMD = os.environ.get("CG_CRY_DETECTOR_CMD", "/usr/bin/python3 /home/jammin/cry_detector.py").split()
@@ -48,6 +52,62 @@ AUTO_START_RETRY_SEC = float(os.environ.get("CG_AUTOSTART_RETRY_SEC", "1.5"))
 LULLABIES_DIR = os.path.expanduser("~/Lullabies")
 os.makedirs(LULLABIES_DIR, exist_ok=True)
 EVENTS_FILE = os.path.expanduser(os.environ.get("CG_EVENTS_FILE", "~/crib_monitor_events.jsonl"))
+
+
+def clamp_volume_percent(value):
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = 50
+    return max(0, min(100, value))
+
+
+def stop_playback_process():
+    global playback_process
+    if not playback_process or playback_process.poll() is not None:
+        playback_process = None
+        return False
+    os.killpg(os.getpgid(playback_process.pid), signal.SIGTERM)
+    try:
+        playback_process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(playback_process.pid), signal.SIGKILL)
+        playback_process.wait()
+    playback_process = None
+    return True
+
+
+def start_playback_process(path, device, volume_percent):
+    """Start lullaby playback with software volume when ffmpeg is available."""
+    volume_percent = clamp_volume_percent(volume_percent)
+    if shutil.which('ffmpeg') and shutil.which('bash'):
+        volume_scalar = volume_percent / 100.0
+        pipeline = (
+            f"ffmpeg -hide_banner -loglevel error -i {shlex.quote(path)} "
+            f"-filter:a volume={volume_scalar:.3f} -f wav - | "
+            f"aplay -q -D {shlex.quote(device)} -"
+        )
+        return subprocess.Popen(
+            ['bash', '-lc', pipeline],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid,
+        )
+    return subprocess.Popen(
+        ['aplay', '-q', '-D', device, path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=os.setsid,
+    )
+
+
+def playable_lullaby_files():
+    files = []
+    for name in os.listdir(LULLABIES_DIR):
+        if name.lower().endswith(('.wav', '.mp3', '.flac')):
+            files.append(name)
+    files.sort()
+    return files
 
 # Camera backend selection:
 # - mlx90640 (default): ./mlx90640_streaming <parent_ip> <parent_port>
@@ -356,10 +416,11 @@ def list_lullabies():
 @app.route('/api/play', methods=['POST'])
 def play_lullaby():
     """Play a lullaby file on Baby Pi speakers via aplay."""
-    global playback_process
+    global playback_process, playback_file, playback_device, playback_volume_percent
     data = request.get_json() or {}
     name = data.get('file')
     device = data.get('device', 'default')
+    playback_volume_percent = clamp_volume_percent(data.get('volume', playback_volume_percent))
     if not name:
         return jsonify({'success': False, 'error': 'file is required'}), 400
     # Ensure within LULLABIES_DIR
@@ -370,13 +431,7 @@ def play_lullaby():
 
     # Stop previous playback if any
     try:
-        if playback_process and playback_process.poll() is None:
-            os.killpg(os.getpgid(playback_process.pid), signal.SIGTERM)
-            try:
-                playback_process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                os.killpg(os.getpgid(playback_process.pid), signal.SIGKILL)
-                playback_process.wait()
+        stop_playback_process()
     except Exception:
         pass
 
@@ -384,14 +439,61 @@ def play_lullaby():
         logger.error("aplay not found; install alsa-utils")
         return jsonify({'success': False, 'error': 'aplay not found; install alsa-utils'}), 500
 
-    cmd = ['aplay', '-q', '-D', device, path]
     try:
-        logger.info(f"Playing lullaby: {' '.join(cmd)}")
-        playback_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
-        return jsonify({'success': True, 'file': name})
+        logger.info(f"Playing lullaby: {path} device={device} volume={playback_volume_percent}%")
+        playback_file = name
+        playback_device = device
+        playback_process = start_playback_process(path, device, playback_volume_percent)
+        return jsonify({'success': True, 'file': name, 'volume': playback_volume_percent})
     except Exception as e:
         logger.error(f"Failed to play: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/play/default', methods=['POST'])
+def play_default_lullaby():
+    """Play the next available lullaby from LULLABIES_DIR."""
+    global playback_index
+    files = playable_lullaby_files()
+    if not files:
+        return jsonify({'success': False, 'error': 'no lullabies found'}), 404
+
+    data = request.get_json() or {}
+    name = files[playback_index % len(files)]
+    playback_index = (playback_index + 1) % len(files)
+    payload = {
+        'file': name,
+        'device': data.get('device', 'default'),
+    }
+    if 'volume' in data:
+        payload['volume'] = data.get('volume')
+
+    with app.test_request_context('/api/play', method='POST', json=payload):
+        return play_lullaby()
+
+
+@app.route('/api/volume', methods=['POST'])
+def set_playback_volume():
+    """Set the default lullaby playback volume percentage."""
+    global playback_process, playback_volume_percent
+    data = request.get_json() or {}
+    playback_volume_percent = clamp_volume_percent(data.get('volume', playback_volume_percent))
+    device = data.get('device') or playback_device or 'default'
+
+    restarted = False
+    if playback_process and playback_process.poll() is None and playback_file:
+        path = os.path.join(LULLABIES_DIR, os.path.basename(playback_file))
+        if os.path.isfile(path):
+            try:
+                stop_playback_process()
+                playback_process = start_playback_process(path, playback_device or device, playback_volume_percent)
+                restarted = True
+            except Exception as e:
+                logger.error(f"Failed to restart playback at new volume: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+    logger.info(f"Playback volume set to {playback_volume_percent}%")
+    return jsonify({'success': True, 'volume': playback_volume_percent, 'restarted': restarted})
 
 
 @app.route('/api/play/stop', methods=['POST'])
@@ -401,13 +503,7 @@ def stop_playback():
     if not playback_process or playback_process.poll() is not None:
         return jsonify({'success': False, 'error': 'not playing'}), 400
     try:
-        os.killpg(os.getpgid(playback_process.pid), signal.SIGTERM)
-        try:
-            playback_process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(playback_process.pid), signal.SIGKILL)
-            playback_process.wait()
-        playback_process = None
+        stop_playback_process()
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Failed to stop playback: {e}")

@@ -21,6 +21,7 @@
 #include "ui/settings.h"
 
 #include "baby_pi_api.h"
+#include <vector>
 #include <string>
 #include <cstring>
 #include <atomic>
@@ -123,6 +124,10 @@ static void on_btn_status(lv_event_t* e) {
 
 // Handler for the simple media Play button (simulator-only).
 static void on_btn_play(lv_event_t* /*e*/) {
+    const int volume = state::volume;
+    std::thread([volume]() {
+        baby_pi_play_default_lullaby(volume);
+    }).detach();
     set_status_text("Playing", lv_color_hex(0x3366FF));
 }
 
@@ -133,6 +138,9 @@ static void on_btn_pause(lv_event_t* /*e*/) {
 
 // Handler for the simple media Stop button (simulator-only).
 static void on_btn_stop(lv_event_t* /*e*/) {
+    std::thread([]() {
+        baby_pi_stop_playback();
+    }).detach();
     set_status_text("Stopped", lv_color_hex(0x444444));
 }
 
@@ -190,6 +198,12 @@ static void request_cry_check() {
 }
 
 static void vol_apply_visuals();
+
+static void send_volume_to_baby(int v) {
+    std::thread([v]() {
+        baby_pi_set_lullaby_volume(v);
+    }).detach();
+}
 
 static void set_volume_value(int v) {
     if (v < 0) v = 0;
@@ -318,6 +332,12 @@ static void on_vol_track(lv_event_t* e) {
     lv_point_t p;
     lv_indev_get_point(indev, &p);
     vol_set_from_point(track, p);
+}
+
+static void on_vol_commit(lv_event_t* e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST) return;
+    send_volume_to_baby(state::volume);
 }
 
 // Toggle quiet-hours state from the top bar pill.
@@ -816,6 +836,8 @@ void build_main_screen() {
     lv_obj_add_flag(stack, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(stack, on_vol_track, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(stack, on_vol_commit, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(stack, on_vol_commit, LV_EVENT_PRESS_LOST, nullptr);
     // If the screen is rebuilt/destroyed, prevent stale pointers from being used.
     lv_obj_add_event_cb(stack, [](lv_event_t* e){
         if (lv_event_get_code(e) == LV_EVENT_DELETE) {
@@ -864,6 +886,8 @@ void build_main_screen() {
     lv_obj_add_flag(knob, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(knob, on_vol_track, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(knob, on_vol_track, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(knob, on_vol_commit, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(knob, on_vol_commit, LV_EVENT_PRESS_LOST, nullptr);
     lv_obj_move_foreground(knob);
 
     // Initial position
@@ -926,4 +950,3 @@ void request_rebuild() {
 }
 
 } // namespace cg::ui
-

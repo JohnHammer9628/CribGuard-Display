@@ -24,7 +24,9 @@ bool baby_pi_listen_stop();
 void baby_pi_record_audio(int seconds);
 
 bool baby_pi_list_lullabies(std::vector<std::string>& out_files);
-void baby_pi_play_lullaby(const std::string& filename);
+void baby_pi_play_lullaby(const std::string& filename, int volume_percent = -1);
+void baby_pi_play_default_lullaby(int volume_percent = -1);
+void baby_pi_set_lullaby_volume(int volume_percent);
 bool baby_pi_rename_lullaby(const std::string& old_name, const std::string& new_name_with_ext);
 void baby_pi_stop_playback();
 

@@ -175,16 +175,62 @@ bool baby_pi_list_lullabies(std::vector<std::string>& out_files) {
     return true;
 }
 
+static int clamp_volume_percent(int volume_percent) {
+    if (volume_percent < 0) return -1;
+    if (volume_percent > 100) return 100;
+    return volume_percent;
+}
+
 // Ask the Baby Pi to play a given lullaby file on the configured audio device.
-void baby_pi_play_lullaby(const std::string& filename) {
+void baby_pi_play_lullaby(const std::string& filename, int volume_percent) {
     std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/play";
-    std::string json = std::string("{\"file\":\"") + filename + "\",\"device\":\"" + g_audio_play_device + "\"}";
+    volume_percent = clamp_volume_percent(volume_percent);
+    std::string json = std::string("{\"file\":\"") + filename + "\",\"device\":\"" + g_audio_play_device + "\"";
+    if (volume_percent >= 0) {
+        json += ",\"volume\":" + std::to_string(volume_percent);
+    }
+    json += "}";
     std::string response;
-    log_line((std::string("[AUDIO] play: ") + filename).c_str());
+    log_line((std::string("[AUDIO] play: ") + filename + " volume=" + std::to_string(volume_percent)).c_str());
     if (http_post(url, json, response)) {
         log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
     } else {
         log_line("[AUDIO] ERROR: failed to start playback");
+    }
+}
+
+// Ask the Baby Pi to pick and play the next available lullaby.
+void baby_pi_play_default_lullaby(int volume_percent) {
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/play/default";
+    volume_percent = clamp_volume_percent(volume_percent);
+    std::string json = std::string("{\"device\":\"") + g_audio_play_device + "\"";
+    if (volume_percent >= 0) {
+        json += ",\"volume\":" + std::to_string(volume_percent);
+    }
+    json += "}";
+    std::string response;
+    log_line((std::string("[AUDIO] play default volume=") + std::to_string(volume_percent)).c_str());
+    if (http_post(url, json, response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+    } else {
+        log_line("[AUDIO] ERROR: failed to start default playback");
+    }
+}
+
+// Update the Baby Pi's default lullaby volume. The server applies this to
+// future auto-play from the cry detector, and may restart active playback so
+// the new level takes effect immediately.
+void baby_pi_set_lullaby_volume(int volume_percent) {
+    volume_percent = clamp_volume_percent(volume_percent);
+    if (volume_percent < 0) return;
+    std::string url = "http://" + g_baby_pi_ip + ":" + std::to_string(g_baby_pi_port) + "/api/volume";
+    std::string json = std::string("{\"volume\":") + std::to_string(volume_percent) + ",\"device\":\"" + g_audio_play_device + "\"}";
+    std::string response;
+    log_line((std::string("[AUDIO] volume: ") + std::to_string(volume_percent)).c_str());
+    if (http_post(url, json, response)) {
+        log_line((std::string("[AUDIO] Baby Pi response: ") + response).c_str());
+    } else {
+        log_line("[AUDIO] ERROR: failed to set playback volume");
     }
 }
 
@@ -403,7 +449,9 @@ bool baby_pi_listen_start() { curl_unavailable("listen_start"); return false; }
 bool baby_pi_listen_stop() { curl_unavailable("listen_stop"); return false; }
 void baby_pi_record_audio(int) { curl_unavailable("record_audio"); }
 bool baby_pi_list_lullabies(std::vector<std::string>& out_files) { out_files.clear(); curl_unavailable("list_lullabies"); return false; }
-void baby_pi_play_lullaby(const std::string&) { curl_unavailable("play_lullaby"); }
+void baby_pi_play_lullaby(const std::string&, int) { curl_unavailable("play_lullaby"); }
+void baby_pi_play_default_lullaby(int) { curl_unavailable("play_default_lullaby"); }
+void baby_pi_set_lullaby_volume(int) { curl_unavailable("set_lullaby_volume"); }
 bool baby_pi_rename_lullaby(const std::string&, const std::string&) { curl_unavailable("rename_lullaby"); return false; }
 void baby_pi_stop_playback() { curl_unavailable("stop_playback"); }
 

@@ -9,7 +9,7 @@ bool quiet_hours = false;
 bool light_mode = false;
 int quiet_start = 18;
 int quiet_end = 7;
-int volume = 50;
+int volume = 25;
 
 lv_obj_t* lbl_status = nullptr;
 lv_obj_t* lbl_conn = nullptr;
@@ -23,4 +23,3 @@ lv_obj_t* stat_conn = nullptr;
 lv_obj_t* stat_vol = nullptr;
 lv_obj_t* stat_qh = nullptr;
 } // namespace cg::ui::state
-

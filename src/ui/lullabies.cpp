@@ -13,6 +13,7 @@
 #include "logging.h"
 
 #include "ui/common.h"
+#include "ui/state.h"
 
 #include <string>
 #include <vector>
@@ -40,7 +41,7 @@ static void on_lullaby_click_play(lv_event_t* e) {
     lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
     lv_obj_t* child = btn ? lv_obj_get_child(btn, 0) : nullptr;
     const char* fname = child ? lv_label_get_text(child) : nullptr;
-    if (fname) baby_pi_play_lullaby(fname);
+    if (fname) baby_pi_play_lullaby(fname, state::volume);
 }
 
 // Long-press handler: open the rename dialog for the pressed lullaby.
@@ -301,4 +302,3 @@ static void close_lullabies() {
 }
 
 } // namespace cg::ui
-
