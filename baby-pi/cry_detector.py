@@ -141,13 +141,14 @@ TONAL_WAIL_PITCH_CONF_MIN = float(os.environ.get("CG_CRY_TONAL_WAIL_PITCH_CONF_M
 #   Raise ENTER_SCORE -> needs more accumulated evidence to trigger
 #   Raise EXIT_SCORE  -> clears faster once the baby is quiet
 SCORE_UP = 3.0                 # slower latch: normal speech can produce brief cry-shaped chunks
+TONAL_WAIL_SCORE_UP = 1.0      # weak contribution for pure-tone chunks; adult speech can imitate these
                                # produce 2-4 cry-passing chunks per burst. With SCORE_UP=3 score barely
                                # crosses ENTER_SCORE=12 then drops back below EXIT_SCORE=10 → latch
                                # flickers. At 5, a 3-chunk burst pushes score to ~15-20, well clear of
                                # EXIT, and the grace window can hold the latch across the inter-burst gap.
 SCORE_DOWN_SILENT = 4.0        # decay when room is actually silent (db below SILENT_DB) — clears fast after real cry ends
 SCORE_DOWN_LATCHED = 0.3       # decay during breath gaps inside a real cry (audible background, just not cry-like right now)
-SCORE_DOWN_IDLE = 1.2          # decay when NOT latched and not clearly silent. Kept moderate so the score can
+SCORE_DOWN_IDLE = 2.0          # decay when NOT latched and not clearly silent. Kept moderate so the score can
                                # accumulate across the breath gaps inside a real cry, where the chunks between
                                # bursts are quieter than the loudness gate but still close in time. The loudness
                                # gate at -22 dB does the music-rejection work; this decay rate just shapes how
@@ -167,7 +168,7 @@ GRACE_SEC = 5.0                # how many seconds we'll keep applying slow latch
                                # effects often cycle burst-silence-burst in 3-6 sec). Trade-off:
                                # this also delays the post-cry clear by GRACE_SEC after the cry
                                # actually ends.
-ENTER_SCORE = 24.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
+ENTER_SCORE = 27.0             # cross this while idle -> latch "crying". Higher value = more sustained signal
                                # required, harder for brief music passages to trip a false alert.
                                # Lowered to 12 from 20 (2026-04-17): cry recordings have peaks every 3-9 sec
                                # with quiet between, so score routinely peaks at 8-14 then crashes before the
@@ -179,12 +180,14 @@ EXIT_SCORE = 10.0              # fall below this while latched -> clear
 # After cry_clear fires, the lullaby plays for POST_CRY_TAIL_SEC more before stopping.
 
 # Rolling evidence catches real crying that arrives as short repeated bursts.
-# Normal speech can create isolated cry_passes, but it usually does not create
-# this many pass chunks in a tight window. This sits alongside the score latch
-# instead of replacing it.
+# Normal speech can create isolated cry_passes and can even run up the score
+# during animated group conversation, so entering the cry state requires a dense
+# cluster of recent pass chunks instead of score alone.
 ROLLING_EVIDENCE_SEC = 3.0
-ROLLING_MIN_PASSES = 12
-ROLLING_MIN_SCORE = float(os.environ.get("CG_CRY_ROLLING_MIN_SCORE", "24.0"))
+ROLLING_MIN_PASSES = 18
+ROLLING_MIN_SCORE = float(os.environ.get("CG_CRY_ROLLING_MIN_SCORE", "27.0"))
+DENSE_ROLLING_MIN_PASSES = 19
+DENSE_ROLLING_MIN_SCORE = float(os.environ.get("CG_CRY_DENSE_ROLLING_MIN_SCORE", "10.0"))
 
 # Seconds to keep the lullaby playing AFTER the cry clears.
 #   0.0     -> stop the lullaby immediately when cry_clear fires
@@ -193,7 +196,7 @@ ROLLING_MIN_SCORE = float(os.environ.get("CG_CRY_ROLLING_MIN_SCORE", "24.0"))
 POST_CRY_TAIL_SEC = 10.0
 
 # Where things live.
-EVENTS_FILE = os.environ.get("CG_EVENTS_FILE", "/tmp/crib_monitor_events.jsonl")
+EVENTS_FILE = os.path.expanduser(os.environ.get("CG_EVENTS_FILE", "~/crib_monitor_events.jsonl"))
 LULLABIES_DIR = os.path.expanduser("~/Lullabies")
 # Optional allowlist for the UI to restrict round-robin. JSON array of filenames.
 # Missing file / empty list = play everything in LULLABIES_DIR.
@@ -209,6 +212,10 @@ LULLABY_DEVICE = os.environ.get("CG_LULLABY_DEVICE", ALSA_DEVICE)
 STATUS_EVERY_N_CHUNKS = 10  # ~1 s at 100 ms chunks
 DEBUG_RAW_CHUNKS = os.environ.get("CG_CRY_DEBUG_RAW", "0").strip().lower() not in ("0", "false", "no")
 DEBUG_PASS_CHUNKS = os.environ.get("CG_CRY_DEBUG_PASSES", "1").strip().lower() not in ("0", "false", "no")
+# The Flask wrapper starts this detector with stdout/stderr connected to pipes
+# it does not read. Keep console logging quiet by default so long idle runs do
+# not block on a full pipe.
+LOG_STDOUT = os.environ.get("CG_CRY_LOG_STDOUT", "0").strip().lower() not in ("0", "false", "no")
 
 # =============================================================================
 
@@ -225,6 +232,11 @@ def _on_signal(_signum, _frame):
 
 def iso_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def log(msg):
+    if LOG_STDOUT:
+        print(msg, flush=True)
 
 
 def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0.0,
@@ -247,8 +259,8 @@ def emit(event_type, state, reason, db=0.0, cry_ratio=0.0, score=0.0, flatness=0
         with open(EVENTS_FILE, "a") as f:
             f.write(line + "\n")
     except OSError as e:
-        print(f"[ERR] write events: {e}", flush=True)
-    print(line, flush=True)
+        log(f"[ERR] write events: {e}")
+    log(line)
 
 
 def http_post(path, body=None, timeout=2.0):
@@ -263,7 +275,7 @@ def http_post(path, body=None, timeout=2.0):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
     except Exception as e:
-        print(f"[ERR] POST {path}: {e}", flush=True)
+        log(f"[ERR] POST {path}: {e}")
         return None
 
 
@@ -295,17 +307,17 @@ def lullaby_candidates():
 def start_lullaby(index_state):
     files = lullaby_candidates()
     if not files:
-        print("[WARN] no lullabies to play", flush=True)
+        log("[WARN] no lullabies to play")
         return
     fname = files[index_state["i"] % len(files)]
     index_state["i"] = (index_state["i"] + 1) % len(files)
     http_post("/api/play", {"file": fname, "device": LULLABY_DEVICE})
-    print(f"[INFO] lullaby -> {fname}", flush=True)
+    log(f"[INFO] lullaby -> {fname}")
 
 
 def stop_lullaby():
     http_post("/api/play/stop")
-    print("[INFO] lullaby stop", flush=True)
+    log("[INFO] lullaby stop")
 
 
 def rms_db(samples_f32):
@@ -399,7 +411,7 @@ def run():
         "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", str(CHANNELS),
         "-t", "raw",
     ]
-    print(f"[INFO] spawning: {' '.join(cmd)}", flush=True)
+    log(f"[INFO] spawning: {' '.join(cmd)}")
     arecord = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     emit("cry_startup", "none", "service_start")
@@ -407,7 +419,6 @@ def run():
     latched = "none"          # "none" or "crying"
     score = 0.0               # cry evidence accumulator (0..SCORE_MAX)
     last_cry_chunk_time = -1e9  # monotonic time of the last is_cry_now chunk
-    first_cry_evidence_time = None  # first passing chunk in the current build-up
     cry_pass_times = []       # monotonic times of recent chunks that passed all cry gates
     lullaby_stop_at = None    # scheduled stop time for the tail
     lullaby_index = {"i": 0}
@@ -444,15 +455,13 @@ def run():
                 and PITCH_MIN_HZ <= pitch_hz <= PITCH_MAX_HZ
                 and pitch_conf >= TONAL_WAIL_PITCH_CONF_MIN
             )
-            is_cry_now = (
-                (
-                    db >= LOUDNESS_THRESHOLD_DB
-                    and ratio >= CRY_RATIO_MIN
-                    and flatness <= TONALITY_MAX
-                    and (pitch_ok or strong_cry_shape)
-                )
-                or tonal_wail
+            ratio_cry = (
+                db >= LOUDNESS_THRESHOLD_DB
+                and ratio >= CRY_RATIO_MIN
+                and flatness <= TONALITY_MAX
+                and (pitch_ok or strong_cry_shape)
             )
+            is_cry_now = ratio_cry or tonal_wail
 
             now = time.monotonic()
             cutoff = now - ROLLING_EVIDENCE_SEC
@@ -473,10 +482,9 @@ def run():
             time_since_cry = now - last_cry_chunk_time
 
             if is_cry_now:
-                if first_cry_evidence_time is None:
-                    first_cry_evidence_time = now
                 last_cry_chunk_time = now
-                score = min(SCORE_MAX, score + SCORE_UP)
+                score_up = SCORE_UP if ratio_cry else TONAL_WAIL_SCORE_UP
+                score = min(SCORE_MAX, score + score_up)
             elif db < SILENT_DB:
                 score = max(0.0, score - SCORE_DOWN_SILENT)
             elif latched == "crying" and time_since_cry < GRACE_SEC:
@@ -488,28 +496,28 @@ def run():
                 # "cry ended" and drain the score quickly.
                 score = max(0.0, score - SCORE_DOWN_SILENT)
             elif not tonal:
-                score = max(0.0, score - SCORE_DOWN_SILENT)
+                # A real cry often has noisy/breathy chunks between clean tonal
+                # chunks. If we have recent cry evidence, bridge those chunks
+                # with the normal idle decay instead of wiping the score.
+                decay = SCORE_DOWN_IDLE if pass_count > 0 else SCORE_DOWN_SILENT
+                score = max(0.0, score - decay)
             else:
                 score = max(0.0, score - SCORE_DOWN_IDLE)
 
-            if latched == "none" and score <= 0.0:
-                first_cry_evidence_time = None
-
-            sustained_evidence = (
-                first_cry_evidence_time is not None
-                and (now - first_cry_evidence_time) >= 1.8
-            )
             rolling_evidence = (
-                pass_count >= ROLLING_MIN_PASSES
-                and score >= ROLLING_MIN_SCORE
+                (
+                    pass_count >= ROLLING_MIN_PASSES
+                    and score >= ROLLING_MIN_SCORE
+                )
+                or (
+                    pass_count >= DENSE_ROLLING_MIN_PASSES
+                    and score >= DENSE_ROLLING_MIN_SCORE
+                )
             )
-            if latched == "none" and (
-                (score >= ENTER_SCORE and sustained_evidence) or rolling_evidence
-            ):
+            if latched == "none" and rolling_evidence:
                 latched = "crying"
-                reason = "rolling_enter" if rolling_evidence else "score_enter"
-                if rolling_evidence:
-                    score = max(score, ENTER_SCORE)
+                reason = "rolling_enter"
+                score = max(score, ENTER_SCORE)
                 emit("cry_alert", "crying", reason, db, ratio, score, flatness,
                      pitch_hz, pitch_conf, pass_count)
                 start_lullaby(lullaby_index)
@@ -517,7 +525,6 @@ def run():
             elif latched == "crying":
                 if score < EXIT_SCORE:
                     latched = "none"
-                    first_cry_evidence_time = None
                     cry_pass_times = []
                     emit("cry_clear", "none", "score_exit", db, ratio, score, flatness,
                          pitch_hz, pitch_conf, pass_count)
@@ -558,5 +565,5 @@ if __name__ == "__main__":
     try:
         run()
     except Exception as e:
-        print(f"[FATAL] {e}", flush=True)
+        log(f"[FATAL] {e}")
         sys.exit(1)
