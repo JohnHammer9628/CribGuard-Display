@@ -49,7 +49,7 @@ PID_FILE = os.environ.get("CG_DETECTOR_PID_FILE", "/tmp/lepton_detector.pid")
 #
 # Watch the live behavior during tests with, on the baby pi:
 #   tail -F /tmp/crib_monitor_events.jsonl
-# Each status line prints cold_area / warm_area / ambient_c. Use those numbers
+# Each status line prints cold_area / ambient_c. Use those numbers
 # to decide which knob to turn. Rule of thumb: find a knob whose threshold sits
 # between your "wet" numbers and your "dry" numbers.
 # =============================================================================
@@ -147,25 +147,22 @@ def reload_roi():
 # baseline before they trigger, lower this.
 BASELINE_ALPHA = 0.02
 
-# Per-pixel temperature delta to count a pixel as "cold" or "warm" vs. the
-# baseline. Units are Y16 raw counts. If the Lepton is in TLinear mode, 1 unit
-# = 0.01 Kelvin (= 0.01 °C of difference), so 100 units ~ 1°C.
-#   cold patches -> COOLER pixels -> negative delta (COLD_DELTA)
-#   warm patches -> WARMER pixels -> positive delta (WARM_DELTA)
-# Wet-vs-dry diaper signature is typically a few hundred cK (~1-3°C).
-#   - More false positives from ambient noise? Raise magnitudes (e.g. ±150).
-#   - Real wetness not being detected? Lower magnitudes (e.g. ±60).
-# NOTE: when this file ran on AGC'd GRAY8, ±12 was tuned to that 0-255 scale.
-# Default below targets ~1°C in TLinear-cK. Re-tune after a few minutes of
+# Per-pixel temperature delta (vs. the rolling baseline) below which a pixel
+# counts as "cold". Units are Y16 raw counts; in TLinear mode 1 unit = 0.01 °C,
+# so -100 ~ 1 °C below baseline. Wet-patch signature is typically a few hundred
+# cK (~1-3 °C cooler than the dry baseline from evaporative cooling).
+#   - More false positives from ambient noise? More negative (e.g. -150).
+#   - Real wetness not being detected? Less negative (e.g. -60).
+# NOTE: this is a class project and only the cold direction is used; warm
+# detection was removed 2026-05-14. Re-tune after a few minutes of
 # tail -F /tmp/crib_monitor_events.jsonl to see the actual baseline noise.
 COLD_DELTA = -100.0
-WARM_DELTA = 100.0
 
 # Fraction of the ROI that must be over the delta threshold to LATCH a new
 # alert. Stored as a percentage of ROI area so the same setting works across
 # different ROI sizes (when the user resizes the ROI from the parent UI, the
-# absolute pixel threshold rescales automatically). Combined with COLD_DELTA
-# / WARM_DELTA, this is the primary "am I wet?" gate.
+# absolute pixel threshold rescales automatically). Combined with COLD_DELTA,
+# this is the primary "am I wet?" gate.
 #   - Raise (e.g. 0.25) -> harder to trigger, fewer false positives
 #   - Lower (e.g. 0.12) -> triggers on smaller wet patches
 ENTER_PCT = 0.19
@@ -179,15 +176,6 @@ EXIT_PCT = 0.094
 # Initial ROI load. Done here (after ENTER_PCT/EXIT_PCT are defined) so the
 # enter_area/exit_area in roi_state are populated before run() starts.
 _apply_roi(*_resolve_roi())
-
-# Dominance ratio: the winning channel (cold or warm) must be this much larger
-# than the other to latch/hold an alert. This rejects "both went up" events
-# which are usually caused by the Lepton's auto-gain rescaling the whole scene.
-#   - Raise (e.g. 2.5) -> only clear, one-sided signals trigger (more precision, less recall)
-#   - Lower (e.g. 1.2) -> almost any excess triggers (more recall, more false positives)
-# If the banner flickers rapidly between cold and warm during a single scene change,
-# raise this.
-DOMINANCE = 1.5
 
 # Seconds a new observation must persist before the latched state actually flips.
 # This is the "don't trigger on a 1-frame blip" timer.
@@ -301,21 +289,17 @@ def run():
 
             delta = roi - baseline
             cold_area = int(np.sum(delta < COLD_DELTA))
-            warm_area = int(np.sum(delta > WARM_DELTA))
             ambient_raw = float(np.mean(frame))
             # Apparent °C assuming TLinear (centikelvin). If TLinear is OFF this
             # number will look unphysical (negative hundreds, or very large) — that's
             # the signal to either enable TLinear or treat values as raw counts.
             ambient_c = ambient_raw * 0.01 - 273.15
 
-            # Pick the dominant signal. A wet patch shows up strongly on ONE
-            # side of the temperature delta, not both. The Lepton's colormap
-            # rescales can briefly inflate both channels at once — those don't
-            # count as a real alert.
-            if cold_area >= warm_area * DOMINANCE and cold_area >= (exit_area if latched == "cold" else enter_area):
+            # Cold-only: a wet patch is cooler than the dry baseline (evaporative
+            # cooling). exit_area is lower than enter_area so a latched alert
+            # holds longer than it took to enter — that's the hysteresis.
+            if cold_area >= (exit_area if latched == "cold" else enter_area):
                 observed = "cold"
-            elif warm_area >= cold_area * DOMINANCE and warm_area >= (exit_area if latched == "warm" else enter_area):
-                observed = "warm"
             else:
                 observed = "none"
 
@@ -327,9 +311,9 @@ def run():
                 elif now - pending_since >= PERSIST_SEC:
                     latched = observed
                     if latched == "none":
-                        emit("wet_clear", latched, "persist", cold_area, warm_area, ambient_raw, ambient_c, 1.0)
+                        emit("wet_clear", latched, "persist", cold_area, 0, ambient_raw, ambient_c, 1.0)
                     else:
-                        emit("wet_alert", latched, "persist", cold_area, warm_area, ambient_raw, ambient_c, 1.0)
+                        emit("wet_alert", latched, "persist", cold_area, 0, ambient_raw, ambient_c, 1.0)
                     pending = latched
             else:
                 pending = latched
@@ -338,7 +322,7 @@ def run():
             frames += 1
             if frames % STATUS_EVERY_N_FRAMES == 0:
                 reason = "persistence_wait" if pending != latched else "stable"
-                emit("status", latched, reason, cold_area, warm_area, ambient_raw, ambient_c, 0.0)
+                emit("status", latched, reason, cold_area, 0, ambient_raw, ambient_c, 0.0)
 
 
 if __name__ == "__main__":
