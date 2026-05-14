@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Crib Guard – Senior Design Handout</title>
+<style>
+  @page {
+    size: letter;
+    margin: 0.4in;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1F2937;
+    background: #FFFFFF;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 100%;
+    max-width: 7.7in;
+    margin: 0 auto;
+  }
+
+  /* ===== Header ===== */
+  header {
+    border-bottom: 3px solid #0F4C5C;
+    padding-bottom: 8px;
+    margin-bottom: 14px;
+  }
+  .title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  h1 {
+    font-size: 28pt;
+    margin: 0;
+    color: #0F4C5C;
+    letter-spacing: -0.5px;
+  }
+  .course {
+    font-size: 9pt;
+    color: #6B7280;
+    text-align: right;
+    line-height: 1.3;
+  }
+  .tagline {
+    font-size: 13pt;
+    font-style: italic;
+    color: #14B8A6;
+    margin-top: 4px;
+    font-weight: 500;
+  }
+  .team {
+    font-size: 9.5pt;
+    color: #4B5563;
+    margin-top: 6px;
+  }
+
+  /* ===== Pitch ===== */
+  .pitch {
+    background: #F0FDFA;
+    border-left: 4px solid #14B8A6;
+    padding: 10px 14px;
+    margin: 0 0 14px 0;
+    font-size: 10.5pt;
+  }
+  .pitch strong { color: #0F4C5C; }
+
+  /* ===== Features grid ===== */
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .feature {
+    background: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-top: 3px solid #0F4C5C;
+    padding: 9px 11px 10px 11px;
+  }
+  .feature h3 {
+    margin: 0 0 4px 0;
+    font-size: 11pt;
+    color: #0F4C5C;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .feature h3 .icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    background: #14B8A6;
+    color: white;
+    border-radius: 50%;
+    font-size: 9pt;
+    line-height: 18px;
+    text-align: center;
+    font-weight: bold;
+  }
+  .feature p {
+    margin: 0 0 4px 0;
+    font-size: 9.5pt;
+  }
+  .feature .tech {
+    font-size: 8.5pt;
+    color: #6B7280;
+    font-family: "Consolas", "Menlo", monospace;
+    margin-top: 4px;
+    border-top: 1px dashed #D1D5DB;
+    padding-top: 4px;
+  }
+
+  /* ===== Architecture ===== */
+  .arch-section h2 {
+    font-size: 12pt;
+    color: #0F4C5C;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #E5E7EB;
+    padding-bottom: 3px;
+  }
+  .arch {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .node {
+    flex: 1;
+    border: 1.5px solid #0F4C5C;
+    border-radius: 4px;
+    padding: 8px 10px;
+    background: #FAFAFA;
+  }
+  .node-title {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #0F4C5C;
+    margin-bottom: 4px;
+  }
+  .node ul {
+    margin: 0;
+    padding-left: 16px;
+    font-size: 8.5pt;
+    color: #374151;
+  }
+  .node li { margin-bottom: 1px; }
+  .link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    color: #14B8A6;
+    font-size: 8.5pt;
+    text-align: center;
+    font-weight: 600;
+    min-width: 95px;
+  }
+  .link .arrows {
+    font-size: 14pt;
+    line-height: 1;
+    margin: 2px 0;
+    color: #14B8A6;
+  }
+  .link .label {
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 7.5pt;
+    color: #6B7280;
+    font-weight: normal;
+    margin-top: 2px;
+  }
+
+  /* ===== Specs / footer ===== */
+  .specs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    font-size: 9pt;
+    margin-bottom: 8px;
+  }
+  .specs h4 {
+    margin: 0 0 3px 0;
+    font-size: 9.5pt;
+    color: #0F4C5C;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .specs ul {
+    margin: 0;
+    padding-left: 14px;
+    color: #374151;
+  }
+  footer {
+    border-top: 2px solid #0F4C5C;
+    margin-top: 10px;
+    padding-top: 6px;
+    font-size: 8pt;
+    color: #6B7280;
+    display: flex;
+    justify-content: space-between;
+  }
+  footer .brand { color: #0F4C5C; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="title-row">
+      <div>
+        <h1>Crib Guard</h1>
+        <div class="tagline">See what they feel. Hear what they need.</div>
+      </div>
+      <div class="course">
+        <strong>CpE 191 / EEE 193 &mdash; Senior Design</strong><br>
+        Sacramento State &middot; Spring 2026
+      </div>
+    </div>
+    <div class="team">
+      <strong>Team:</strong> John Hammer &middot; Sam Hammer &middot; Ryan Huston &middot; Jasen Pritchard
+    </div>
+  </header>
+
+  <div class="pitch">
+    <strong>Crib Guard</strong> is a smart infant monitor that goes beyond a live video feed. A thermal camera quietly watches for the temperature signature of a wet diaper, an on-device audio model recognizes the difference between a fussy whimper and an actual cry, and the caregiver sees and hears it all on a touchscreen across the room &mdash; with an audible alert the moment something needs attention.
+  </div>
+
+  <section class="features">
+
+    <div class="feature">
+      <h3><span class="icon">1</span> Thermal Wetness Detection</h3>
+      <p>A FLIR Lepton 3.5 thermal sensor watches the crib for the cooling signature of a wet diaper. Caregivers draw a region of interest directly on the live feed to focus detection on the diaper area, and the system triggers a visual banner plus a two-tone audio alert through the parent unit's speaker.</p>
+    </div>
+
+    <div class="feature">
+      <h3><span class="icon">2</span> Smart Cry Detection</h3>
+      <p>A real-time audio classifier on the baby unit distinguishes infant cries from ambient room sound using pitch, spectral flatness, and persistence scoring. It's lullaby-aware: when soothing music is playing, the state machine won't mistake it for crying.</p>
+    </div>
+
+    <div class="feature">
+      <h3><span class="icon">3</span> Live Camera + Listen Mode</h3>
+      <p>Low-latency thermal video streams over a dedicated WiFi link to the parent display. A push-to-talk "Listen" toggle pipes the baby unit's microphone to the parent's speaker via Opus over RTP for clean, low-delay audio.</p>
+    </div>
+
+    <div class="feature">
+      <h3><span class="icon">4</span> Touchscreen Control Panel</h3>
+      <p>The parent unit runs a custom kiosk UI built on LVGL with a 7" DSI touchscreen. Caregivers can view the live feed, set the wetness detection region, toggle listen mode, play lullabies on the baby unit, and acknowledge alerts &mdash; all from one screen.</p>
+    </div>
+
+  </section>
+
+  <section class="arch-section">
+    <h2>System Architecture</h2>
+    <div class="arch">
+      <div class="node">
+        <div class="node-title">Baby Unit (Raspberry Pi)</div>
+        <ul>
+          <li>FLIR Lepton 3.5 thermal cam</li>
+          <li>USB microphone</li>
+          <li>Speaker (lullaby output)</li>
+          <li>Wetness + cry detectors (Python)</li>
+          <li>Flask control API</li>
+        </ul>
+      </div>
+      <div class="link">
+        <div>Dedicated</div>
+        <div class="arrows">&#8646;</div>
+        <div>WiFi Link</div>
+        <div class="label">192.168.50.0/24<br>UDP/RTP + HTTP</div>
+      </div>
+      <div class="node">
+        <div class="node-title">Parent Unit (Raspberry Pi 5)</div>
+        <ul>
+          <li>7" touchscreen kiosk</li>
+          <li>LVGL C++ UI</li>
+          <li>GStreamer video receiver</li>
+          <li>PipeWire audio mixer</li>
+          <li>USB speaker for alerts</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="specs">
+    <div>
+      <h4>Detection</h4>
+      <ul>
+        <li>9 fps thermal analysis</li>
+        <li>~4 s alert debounce</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Connectivity</h4>
+      <ul>
+        <li>Point-to-point WiFi</li>
+        <li>No cloud dependency</li>
+        <li>Fully local data path</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Platform</h4>
+      <ul>
+        <li>Raspberry Pi OS (Trixie)</li>
+        <li>C++ / Python / GStreamer</li>
+        <li>Open-source stack</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span><span class="brand">Crib Guard</span> &middot; Senior Design Project &middot; CpE 191 / EEE 193</span>
+    <span>Sacramento State &middot; Spring 2026</span>
+  </footer>
+
+</div>
+</body>
+</html>
