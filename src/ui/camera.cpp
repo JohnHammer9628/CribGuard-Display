@@ -17,6 +17,7 @@
 #include "ui/listen.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -92,12 +93,30 @@ static void apply_wet_banner_state(const char* state) {
     lv_obj_clear_flag(g_cam_wet_banner, LV_OBJ_FLAG_HIDDEN);
 }
 
+// Fire-and-forget audio alert. pw-play talks to PipeWire (the Wayland kiosk's
+// audio server) — bare aplay fails with error 524 because PipeWire owns the
+// device exclusively. pw-play only takes one file at a time, so we chain two
+// invocations in a subshell and background the whole group so std::system
+// returns immediately and the LVGL thread isn't blocked.
+static void play_wetness_alert() {
+    log_line("[WET] playing alert sound");
+    std::system("(pw-play /home/pi5/CribGuard-Display/wetness.wav; "
+                " pw-play /home/pi5/CribGuard-Display/wetness.wav) &");
+}
+
 // Runs on the LVGL thread via lv_async_call after the HTTP worker finishes.
 static void wet_apply_async(void* param) {
     WetFetchResult* r = static_cast<WetFetchResult*>(param);
     if (!g_cam_wet_shutdown.load(std::memory_order_acquire) && r->ok) {
         if (r->state != g_cam_wet_last_state) {
             log_line((std::string("[WET] state: ") + g_cam_wet_last_state + " -> " + r->state).c_str());
+            // Sound the alert on transitions INTO a wet state. Since warm
+            // detection was removed, that means none -> cold. Guarding on the
+            // transition (rather than just the new value) ensures we don't
+            // re-fire on every poll while the state stays latched.
+            if (r->state == "cold" && g_cam_wet_last_state != "cold") {
+                play_wetness_alert();
+            }
             g_cam_wet_last_state = r->state;
         }
         apply_wet_banner_state(r->state.c_str());

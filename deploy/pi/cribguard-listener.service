@@ -6,8 +6,17 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi5
+# pulsesink routes through PipeWire (the Wayland kiosk's audio server) instead
+# of grabbing the ALSA device directly. This lets other audio (e.g. the wetness
+# alert played by the LVGL UI via pw-play) share the speaker. The hardware
+# selection now happens via wpctl's default sink rather than a device= string.
+#
+# XDG_RUNTIME_DIR is required for gst pulsesink to find the PipeWire/Pulse
+# socket — system services don't inherit pi5's per-user session env, so we set
+# it explicitly. UID 1000 is the default for the first user on Raspberry Pi OS;
+# adjust if `id -u pi5` shows a different value.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=CG_LISTEN_PORT=5001
-Environment=CG_LISTEN_ALSA_DEVICE=plughw:2,0
 Environment=CG_LISTEN_SAMPLE_RATE=16000
 ExecStart=/usr/bin/gst-launch-1.0 -q \
   udpsrc port=${CG_LISTEN_PORT} caps="application/x-rtp,media=audio,encoding-name=OPUS,payload=97,clock-rate=48000,encoding-params=(string)1" ! \
@@ -16,7 +25,7 @@ ExecStart=/usr/bin/gst-launch-1.0 -q \
   opusdec ! \
   audioconvert ! \
   audioresample ! \
-  alsasink device=${CG_LISTEN_ALSA_DEVICE} sync=false
+  pulsesink sync=false
 Restart=on-failure
 RestartSec=2
 
