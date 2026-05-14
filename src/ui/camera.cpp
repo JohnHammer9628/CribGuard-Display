@@ -124,6 +124,20 @@ static void wet_poll_cb(lv_timer_t* /*t*/) {
 static void apply_camera_ui_state();
 static void request_camera_start_async(const char* reason);
 
+// The parent's GStreamer receive pipeline rotates incoming frames 180° for
+// display (see videoflip in camera_rx_gst.cpp). The detector on the baby pi
+// slices the *un-rotated* raw frame, so display-space ROI coords need a 180°
+// flip before being sent over the wire and after being read back.
+// Involution: applying twice is the identity, so the same transform works both
+// ways. If the videoflip is ever removed, delete these two calls.
+static void roi_display_to_raw(int& xs, int& ys, int& xe, int& ye) {
+    int new_xs = CAM_FRAME_W - xe;
+    int new_ys = CAM_FRAME_H - ye;
+    int new_xe = CAM_FRAME_W - xs;
+    int new_ye = CAM_FRAME_H - ys;
+    xs = new_xs; ys = new_ys; xe = new_xe; ye = new_ye;
+}
+
 // Clamp the staged ROI to frame bounds and ensure it's non-empty.
 static void roi_clamp() {
     if (g_roi_x_start < 0) g_roi_x_start = 0;
@@ -195,10 +209,12 @@ struct RoiFetchResult {
 static void roi_enter_apply_async(void* param) {
     RoiFetchResult* r = static_cast<RoiFetchResult*>(param);
     if (r->ok) {
-        g_roi_x_start = r->x_start;
-        g_roi_y_start = r->y_start;
-        g_roi_x_end   = r->x_end;
-        g_roi_y_end   = r->y_end;
+        int xs = r->x_start, ys = r->y_start, xe = r->x_end, ye = r->y_end;
+        roi_display_to_raw(xs, ys, xe, ye);  // raw → display (same transform, involution)
+        g_roi_x_start = xs;
+        g_roi_y_start = ys;
+        g_roi_x_end   = xe;
+        g_roi_y_end   = ye;
         roi_clamp();
     }
     delete r;
@@ -232,7 +248,11 @@ static void roi_exit_edit() {
 
 static void on_roi_save_clicked(lv_event_t* /*e*/) {
     int xs = g_roi_x_start, ys = g_roi_y_start, xe = g_roi_x_end, ye = g_roi_y_end;
-    log_line((std::string("[ROI] save: ") +
+    roi_display_to_raw(xs, ys, xe, ye);
+    log_line((std::string("[ROI] save: display ") +
+              std::to_string(g_roi_x_start) + "," + std::to_string(g_roi_y_start) + " -> " +
+              std::to_string(g_roi_x_end)   + "," + std::to_string(g_roi_y_end)   +
+              "  raw " +
               std::to_string(xs) + "," + std::to_string(ys) + " -> " +
               std::to_string(xe) + "," + std::to_string(ye)).c_str());
     std::thread([xs, ys, xe, ye]() {
